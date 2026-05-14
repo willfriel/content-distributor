@@ -217,6 +217,31 @@ class PipelineRun(db.Model):
         }
 
 
+class LumiStory(db.Model):
+    """A generated Lumi Tales story, ready for video production."""
+    __tablename__ = "lumi_stories"
+
+    id           = db.Column(db.Integer, primary_key=True)
+    character    = db.Column(db.String(100), nullable=False)
+    style        = db.Column(db.String(10), nullable=False)   # A, B, or C
+    title        = db.Column(db.String(300), nullable=False)
+    moral        = db.Column(db.String(500))
+    script       = db.Column(db.JSON)    # list of scene dicts
+    status       = db.Column(db.String(30), default="draft")  # draft/ready/posted
+    content_id   = db.Column(db.Integer, db.ForeignKey("content_queue.id"), nullable=True)
+    generated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    posted_at    = db.Column(db.DateTime)
+
+    def to_dict(self):
+        return {
+            "id": self.id, "character": self.character, "style": self.style,
+            "title": self.title, "moral": self.moral, "script": self.script,
+            "status": self.status, "content_id": self.content_id,
+            "generated_at": self.generated_at.isoformat(),
+            "posted_at": self.posted_at.isoformat() if self.posted_at else None,
+        }
+
+
 class ReferenceAccount(db.Model):
     """Instagram/YouTube accounts we scrape for style training."""
     __tablename__ = "reference_accounts"

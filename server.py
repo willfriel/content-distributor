@@ -13,7 +13,7 @@ from flask_sqlalchemy import SQLAlchemy
 from google_auth_oauthlib.flow import Flow
 
 from config import Config
-from models import db, Niche, SocialAccount, ContentQueue, PostMetrics, ABTest, TrackedLink, LinkClick, CreditBudget, PipelineRun
+from models import db, Niche, SocialAccount, ContentQueue, PostMetrics, ABTest, TrackedLink, LinkClick, CreditBudget, PipelineRun, LumiStory
 from integrations.opusclip import OpusClipClient
 from integrations import youtube as yt_integration
 from integrations import instagram as ig_integration
@@ -1852,6 +1852,45 @@ def run_scraper():
 def get_style_guides():
     guides = StyleGuide.query.all()
     return jsonify([g.to_dict() for g in guides])
+
+
+# ---------------------------------------------------------------------------
+# Lumi Tales story management
+# ---------------------------------------------------------------------------
+
+from models import LumiStory
+
+@app.route("/api/lumi/stories", methods=["GET"])
+def list_lumi_stories():
+    status  = request.args.get("status")
+    query   = LumiStory.query.order_by(LumiStory.generated_at.desc())
+    if status:
+        query = query.filter_by(status=status)
+    stories = query.limit(50).all()
+    return jsonify([s.to_dict() for s in stories])
+
+
+@app.route("/api/lumi/generate", methods=["POST"])
+def generate_lumi_story():
+    """Manually trigger a story generation."""
+    from pipeline.lumi_tales import generate_and_store
+    import threading
+    threading.Thread(target=generate_and_store, args=[app], daemon=True).start()
+    return jsonify({"status": "generating"})
+
+
+@app.route("/api/lumi/stories/<int:story_id>", methods=["GET"])
+def get_lumi_story(story_id):
+    story = LumiStory.query.get_or_404(story_id)
+    return jsonify(story.to_dict())
+
+
+@app.route("/api/lumi/stories/<int:story_id>", methods=["DELETE"])
+def delete_lumi_story(story_id):
+    story = LumiStory.query.get_or_404(story_id)
+    db.session.delete(story)
+    db.session.commit()
+    return jsonify({"deleted": True})
 
 
 def _seed_reference_accounts():

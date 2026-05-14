@@ -53,6 +53,10 @@ def _job_scrape_and_learn():
     scrape_all_accounts(_app)
     learn_all_niches(_app)
 
+def _job_generate_lumi_story():
+    from pipeline.lumi_tales import generate_and_store
+    generate_and_store(_app)
+
 _JOB_FUNCS = {
     "trading":    _job_trading,
     "fitness":    _job_fitness,
@@ -249,6 +253,17 @@ def init_scheduler(app):
         hour               = 3,
         minute             = 0,
         id                 = "token_refresh",
+        replace_existing   = True,
+        misfire_grace_time = 3600,
+    )
+
+    # Generate a new Lumi Tales story every day at 8am UTC (ahead of 9pm post time)
+    _scheduler.add_job(
+        func               = _job_generate_lumi_story,
+        trigger            = "cron",
+        hour               = 8,
+        minute             = 0,
+        id                 = "lumi_generate",
         replace_existing   = True,
         misfire_grace_time = 3600,
     )
