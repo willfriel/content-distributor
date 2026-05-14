@@ -486,7 +486,7 @@ def init_scheduler(app):
         "fitness":    _job_longform_fitness,
         "crime":      _job_longform_crime,
         "sports":     _job_longform_sports,
-        "anatomy":    _job_longform_anatomy,
+        "gaming":     _job_longform_gaming,
         "everything": _job_longform_everything,
         "kids":       _job_longform_kids,
     }
