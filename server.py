@@ -1815,6 +1815,17 @@ def list_accounts():
     return jsonify([a.to_dict() for a in accounts])
 
 
+@app.route("/api/accounts/<int:account_id>", methods=["PATCH"])
+def update_account(account_id):
+    """Update account_name stored in DB. Body: { "account_name": "..." }"""
+    account = SocialAccount.query.get_or_404(account_id)
+    data    = request.get_json(force=True)
+    if "account_name" in data:
+        account.account_name = data["account_name"]
+    db.session.commit()
+    return jsonify(account.to_dict())
+
+
 @app.route("/api/accounts/<int:account_id>/update-channel", methods=["POST"])
 def update_channel(account_id):
     """
