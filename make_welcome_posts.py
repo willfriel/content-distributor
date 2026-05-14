@@ -3,8 +3,8 @@ import requests
 from pathlib import Path
 from moviepy import ColorClip, TextClip, CompositeVideoClip
 
-FLASK_URL  = "http://localhost:5000"
-NGROK_URL  = "https://chef-outbound-banked.ngrok-free.dev"
+FLASK_URL  = "https://content-distributor.onrender.com"
+NGROK_URL  = "https://content-distributor.onrender.com"
 VIDEOS_DIR = Path(__file__).parent / "static" / "videos"
 
 NICHES = [
@@ -37,11 +37,11 @@ NICHES = [
         "filename":     "welcome_sports.mp4",
     },
     {
-        "niche":        "anatomy",
-        "account_name": "Sweat Science",
-        "content":      "anatomy, physiology, and medical education content",
-        "hashtags":     "#anatomy #physiology #medical #medicine #health #science #biology #medstudent #medicaleducation #humanbody",
-        "filename":     "welcome_anatomy.mp4",
+        "niche":        "gaming",
+        "account_name": "pipeline_gaming_",
+        "content":      "daily gaming clips, viral moments, and stories from the world of gaming",
+        "hashtags":     "#gaming #gamer #twitch #fyp #viral #gameplay #esports #gamingmoments #streamer #clips",
+        "filename":     "welcome_gaming.mp4",
     },
     {
         "niche":        "everything",
@@ -103,9 +103,14 @@ def post_to_niche(niche_data, video_url):
 
 
 if __name__ == "__main__":
+    import sys
     VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 
-    for nd in NICHES:
+    # Optionally filter to a single niche: python make_welcome_posts.py gaming
+    filter_niche = sys.argv[1] if len(sys.argv) > 1 else None
+    niches_to_run = [nd for nd in NICHES if not filter_niche or nd["niche"] == filter_niche]
+
+    for nd in niches_to_run:
         print(f"\n{'='*55}")
         print(f"  {nd['account_name']}  ({nd['niche']})")
         print(f"{'='*55}")
@@ -116,7 +121,7 @@ if __name__ == "__main__":
         generate_video(output_path, nd["account_name"], nd["content"])
         print("done")
 
-        video_url = f"{NGROK_URL}/static/videos/{nd['filename']}"
+        video_url = f"{FLASK_URL}/static/videos/{nd['filename']}"
         print(f"  URL: {video_url}")
 
         print("  Queuing upload...", end=" ", flush=True)

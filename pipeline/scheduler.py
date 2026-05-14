@@ -107,6 +107,19 @@ def run_pipeline_for_niche(niche: str, app):
     with app.app_context():
         from models import db, Niche, SocialAccount, PipelineRun, CreditBudget, ContentQueue
         from server  import _run_job, _inject_affiliate_links
+        from datetime import timedelta
+
+        # Dedupe guard — skip if a run already started for this niche in the last 10 min
+        # Prevents double-posting during Render zero-downtime deploys (two instances overlap)
+        cutoff = datetime.utcnow() - timedelta(minutes=10)
+        recent = PipelineRun.query.filter(
+            PipelineRun.niche       == niche,
+            PipelineRun.status      == "running",
+            PipelineRun.started_at  >= cutoff,
+        ).first()
+        if recent:
+            print(f"[pipeline] Skipping {niche} — run #{recent.id} already in progress")
+            return
 
         print(f"[pipeline] Starting job for niche={niche} at {datetime.utcnow()}")
 
