@@ -40,6 +40,9 @@ class Config:
     TWITCH_CLIENT_ID = os.environ.get("TWITCH_CLIENT_ID")
     TWITCH_CLIENT_SECRET = os.environ.get("TWITCH_CLIENT_SECRET")
 
+    # Pexels (free stock video)
+    PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY")
+
     # Telegram (optional notifications)
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")

@@ -43,6 +43,8 @@ services:
         sync: false
       - key: TWITCH_CLIENT_SECRET
         sync: false
+      - key: PEXELS_API_KEY
+        sync: false
 
 databases:
   - name: content-distributor-db

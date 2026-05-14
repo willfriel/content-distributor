@@ -121,8 +121,12 @@ def fetch_youtube_candidates(niche: str, api_key: str, max_results: int = 5) -> 
 # Reddit source
 # ---------------------------------------------------------------------------
 
-def fetch_reddit_candidates(niche: str, max_results: int = 5) -> list[dict]:
-    """Pull top video posts from niche subreddits (no auth needed)."""
+def fetch_reddit_candidates(niche: str, max_results: int = 5,
+                            timeframe: str = "day") -> list[dict]:
+    """
+    Pull top video posts from niche subreddits.
+    timeframe: hour, day, week, month, year, all
+    """
     config     = NICHE_CONFIG.get(niche, {})
     subreddits = config.get("subreddits", [])
     if not subreddits:
@@ -132,7 +136,7 @@ def fetch_reddit_candidates(niche: str, max_results: int = 5) -> list[dict]:
     try:
         r = requests.get(
             f"https://www.reddit.com/r/{subreddit}/top.json",
-            params={"t": "day", "limit": 25},
+            params={"t": timeframe, "limit": 25},
             headers={"User-Agent": "content-distributor/1.0"},
             timeout=15,
         )
@@ -141,7 +145,6 @@ def fetch_reddit_candidates(niche: str, max_results: int = 5) -> list[dict]:
         candidates = []
         for post in posts:
             d = post.get("data", {})
-            # Only video posts
             if not (d.get("is_video") or "v.redd.it" in d.get("url", "") or
                     "youtube.com" in d.get("url", "") or "youtu.be" in d.get("url", "")):
                 continue
@@ -152,6 +155,7 @@ def fetch_reddit_candidates(niche: str, max_results: int = 5) -> list[dict]:
                 "source_type": "reddit",
                 "niche":       niche,
                 "subreddit":   subreddit,
+                "timeframe":   timeframe,
             })
             if len(candidates) >= max_results:
                 break
@@ -184,6 +188,107 @@ def fetch_rss_topics(niche: str, max_results: int = 3) -> list[dict]:
         except Exception as e:
             print(f"[sources] RSS fetch failed for {niche}: {e}")
     return topics
+
+
+# ---------------------------------------------------------------------------
+# Pexels free stock video source (fitness, anatomy, general b-roll)
+# ---------------------------------------------------------------------------
+
+PEXELS_QUERIES = {
+    "fitness":    ["gym workout", "exercise form", "weightlifting", "running athlete", "yoga"],
+    "anatomy":    ["human body", "heartbeat medical", "brain neuron", "blood cells", "muscle anatomy"],
+    "sports":     ["sports highlights", "basketball dunk", "soccer goal", "athlete training"],
+    "everything": ["satisfying", "nature timelapse", "city life", "funny animal"],
+    "kids":       ["children playing", "colorful cartoon", "kid learning", "family fun"],
+    "trading":    ["stock market screen", "finance charts", "city skyline night"],
+    "crime":      ["dark city night", "detective mystery", "rain window dark"],
+}
+
+def fetch_pexels_candidates(niche: str, max_results: int = 3) -> list[dict]:
+    """Fetch free stock videos from Pexels matching the niche."""
+    api_key = os.environ.get("PEXELS_API_KEY")
+    if not api_key:
+        return []
+
+    queries = PEXELS_QUERIES.get(niche, [niche])
+    query   = random.choice(queries)
+
+    try:
+        r = requests.get(
+            "https://api.pexels.com/videos/search",
+            headers={"Authorization": api_key},
+            params={"query": query, "per_page": max_results * 2,
+                    "orientation": "portrait", "size": "medium"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        videos = r.json().get("videos", [])
+        candidates = []
+        for v in videos:
+            # Get the HD portrait file
+            files = sorted(v.get("video_files", []),
+                           key=lambda f: f.get("height", 0), reverse=True)
+            portrait = next((f for f in files if f.get("height", 0) >= 720), None)
+            if not portrait:
+                continue
+            candidates.append({
+                "url":         portrait["link"],
+                "title":       v.get("url", query).split("/")[-2].replace("-", " "),
+                "source_type": "pexels",
+                "niche":       niche,
+                "query":       query,
+            })
+            if len(candidates) >= max_results:
+                break
+        return candidates
+    except Exception as e:
+        print(f"[sources] Pexels fetch failed for {niche}: {e}")
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Brainrot background clips (for crime / anatomy overlay)
+# Pulls satisfying/GTA clips from Reddit to use as background footage
+# ---------------------------------------------------------------------------
+
+BRAINROT_SUBREDDITS = [
+    "oddlysatisfying", "perfectlycutscreams", "gtaonline",
+    "softwaregore", "mildlyinfuriating", "Whatcouldgowrong",
+]
+
+def fetch_brainrot_clip(max_results: int = 3) -> list[dict]:
+    """
+    Fetch loopable background clips for crime/anatomy overlays.
+    Pulls from satisfying/GTA subreddits — high retention, no context needed.
+    """
+    subreddit = random.choice(BRAINROT_SUBREDDITS)
+    try:
+        r = requests.get(
+            f"https://www.reddit.com/r/{subreddit}/top.json",
+            params={"t": "week", "limit": 25},
+            headers={"User-Agent": "content-distributor/1.0"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        posts = r.json().get("data", {}).get("children", [])
+        candidates = []
+        for post in posts:
+            d = post.get("data", {})
+            if not (d.get("is_video") or "v.redd.it" in d.get("url", "")):
+                continue
+            candidates.append({
+                "url":         d["url"],
+                "title":       d.get("title", ""),
+                "source_type": "brainrot",
+                "niche":       "background",
+                "subreddit":   subreddit,
+            })
+            if len(candidates) >= max_results:
+                break
+        return candidates
+    except Exception as e:
+        print(f"[sources] Brainrot fetch failed r/{subreddit}: {e}")
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -246,15 +351,27 @@ def get_candidates(niche: str, youtube_api_key: str = None) -> list[dict]:
     """Return all available candidates for a niche, ranked by source quality."""
     candidates = []
 
-    # YouTube CC clips (best quality, direct video URL)
+    # YouTube CC clips
     if youtube_api_key:
         candidates += fetch_youtube_candidates(niche, youtube_api_key)
 
-    # Twitch clips (viral, short-form, perfect for repurposing)
+    # Twitch clips (viral, short-form)
     candidates += fetch_twitch_candidates(niche)
 
-    # Reddit video posts
-    candidates += fetch_reddit_candidates(niche)
+    # Pexels stock video (fitness, anatomy — needs real b-roll)
+    if niche in ("fitness", "anatomy", "sports", "kids", "trading"):
+        candidates += fetch_pexels_candidates(niche)
+
+    # Reddit — for "everything" pull BOTH timeframes (fresh + all-time classics)
+    if niche == "everything":
+        candidates += fetch_reddit_candidates(niche, timeframe="day")    # last 24h
+        candidates += fetch_reddit_candidates(niche, timeframe="all")    # all-time viral
+    else:
+        candidates += fetch_reddit_candidates(niche, timeframe="day")
+
+    # Crime gets a brainrot background clip as an overlay option
+    if niche == "crime":
+        candidates += fetch_brainrot_clip()
 
     # RSS as AI topic seeds (lower priority)
     rss = fetch_rss_topics(niche)
