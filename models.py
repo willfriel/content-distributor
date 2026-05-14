@@ -217,6 +217,35 @@ class PipelineRun(db.Model):
         }
 
 
+class LongFormVideo(db.Model):
+    """A planned or completed long-form YouTube video."""
+    __tablename__ = "longform_videos"
+
+    id           = db.Column(db.Integer, primary_key=True)
+    niche        = db.Column(db.String(100), nullable=False)
+    title        = db.Column(db.String(300), nullable=False)
+    description  = db.Column(db.Text)       # YouTube description with chapters
+    script       = db.Column(db.JSON)       # chapters with narration + visual prompts
+    tags         = db.Column(db.JSON, default=list)
+    thumbnail_desc = db.Column(db.Text)     # prompt for thumbnail generation
+    status       = db.Column(db.String(30), default="draft")  # draft/ready/rendering/posted/failed
+    youtube_url  = db.Column(db.String(300))
+    content_id   = db.Column(db.Integer, db.ForeignKey("content_queue.id"), nullable=True)
+    generated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    posted_at    = db.Column(db.DateTime)
+
+    def to_dict(self):
+        return {
+            "id": self.id, "niche": self.niche, "title": self.title,
+            "description": self.description, "script": self.script,
+            "tags": self.tags, "thumbnail_desc": self.thumbnail_desc,
+            "status": self.status, "youtube_url": self.youtube_url,
+            "content_id": self.content_id,
+            "generated_at": self.generated_at.isoformat(),
+            "posted_at": self.posted_at.isoformat() if self.posted_at else None,
+        }
+
+
 class LumiStory(db.Model):
     """A generated Lumi Tales story, ready for video production."""
     __tablename__ = "lumi_stories"

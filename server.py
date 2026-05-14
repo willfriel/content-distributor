@@ -13,7 +13,7 @@ from flask_sqlalchemy import SQLAlchemy
 from google_auth_oauthlib.flow import Flow
 
 from config import Config
-from models import db, Niche, SocialAccount, ContentQueue, PostMetrics, ABTest, TrackedLink, LinkClick, CreditBudget, PipelineRun, LumiStory
+from models import db, Niche, SocialAccount, ContentQueue, PostMetrics, ABTest, TrackedLink, LinkClick, CreditBudget, PipelineRun, LumiStory, LongFormVideo
 from integrations.opusclip import OpusClipClient
 from integrations import youtube as yt_integration
 from integrations import instagram as ig_integration
@@ -1044,10 +1044,18 @@ def _run_job(content_id: int, accounts: list, should_clip: bool,
             variant = (account_vars or {}).get(account.id)
             account_results = []
 
+            is_short      = content_type not in ("longform", "lumi_full")
+            made_for_kids = content_type in ("lumi_full", "lumi_short")
+
             for clip_url in clip_urls:
                 try:
                     if account.platform == "youtube":
-                        r = yt_integration.upload_video(creds, clip_url, item.title, caption)
+                        r = yt_integration.upload_video(
+                            creds, clip_url, item.title, caption,
+                            niche         = niche_name,
+                            is_short      = is_short,
+                            made_for_kids = made_for_kids,
+                        )
                     elif account.platform == "instagram":
                         r = ig_integration.upload_reel(creds, clip_url, caption or item.title)
                     elif account.platform == "tiktok":
@@ -1891,6 +1899,61 @@ def delete_lumi_story(story_id):
     db.session.delete(story)
     db.session.commit()
     return jsonify({"deleted": True})
+
+
+# ---------------------------------------------------------------------------
+# Long-form video management
+# ---------------------------------------------------------------------------
+
+@app.route("/api/longform/videos", methods=["GET"])
+def list_longform_videos():
+    niche  = request.args.get("niche")
+    status = request.args.get("status")
+    q = LongFormVideo.query.order_by(LongFormVideo.generated_at.desc())
+    if niche:
+        q = q.filter_by(niche=niche)
+    if status:
+        q = q.filter_by(status=status)
+    videos = q.limit(50).all()
+    return jsonify([v.to_dict() for v in videos])
+
+
+@app.route("/api/longform/videos/<int:video_id>", methods=["GET"])
+def get_longform_video(video_id):
+    video = LongFormVideo.query.get_or_404(video_id)
+    return jsonify(video.to_dict())
+
+
+@app.route("/api/longform/generate", methods=["POST"])
+def generate_longform_video():
+    """Manually trigger long-form generation for a niche."""
+    data  = request.get_json(force=True)
+    niche = data.get("niche", "everything")
+    topic = data.get("topic")
+    import threading
+    from pipeline.longform import run_longform_for_niche
+    threading.Thread(target=run_longform_for_niche, args=[niche, app], daemon=True).start()
+    return jsonify({"status": "generating", "niche": niche, "topic": topic})
+
+
+@app.route("/api/longform/videos/<int:video_id>", methods=["DELETE"])
+def delete_longform_video(video_id):
+    video = LongFormVideo.query.get_or_404(video_id)
+    db.session.delete(video)
+    db.session.commit()
+    return jsonify({"deleted": video_id})
+
+
+@app.route("/api/longform/latest", methods=["GET"])
+def latest_longform_per_niche():
+    """Return the most recently posted long-form video for each niche (for Short CTAs)."""
+    niches = ["trading", "fitness", "crime", "sports", "anatomy", "everything", "kids"]
+    result = {}
+    for n in niches:
+        v = LongFormVideo.query.filter_by(niche=n, status="posted")\
+                               .order_by(LongFormVideo.posted_at.desc()).first()
+        result[n] = {"title": v.title, "youtube_url": v.youtube_url} if v else None
+    return jsonify(result)
 
 
 def _seed_reference_accounts():

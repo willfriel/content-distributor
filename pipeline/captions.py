@@ -136,18 +136,45 @@ VARIANT_B: [caption here]"""
 
 
 # ---------------------------------------------------------------------------
+# Long-form CTA helpers
+# ---------------------------------------------------------------------------
+
+def _get_longform_cta(niche: str) -> str:
+    """Return a CTA line pointing to the latest long-form video for this niche, or ''."""
+    try:
+        from models import LongFormVideo
+        lf = LongFormVideo.query.filter_by(niche=niche, status="posted")\
+                                .order_by(LongFormVideo.posted_at.desc()).first()
+        if lf and lf.youtube_url:
+            return f"\n\nWatch the full video 👉 {lf.youtube_url}"
+    except Exception:
+        pass
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def generate_captions(niche: str, title: str) -> tuple[str, str]:
+def generate_captions(niche: str, title: str, add_longform_cta: bool = False) -> tuple[str, str]:
     """
     Returns (caption_a, caption_b) — always two variants for A/B testing.
     Uses Claude API if ANTHROPIC_API_KEY is set, otherwise falls back to templates.
+    Pass add_longform_cta=True for Shorts to append a link to the full long-form video.
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if api_key:
         try:
-            return _claude_captions(niche, title, api_key)
+            cap_a, cap_b = _claude_captions(niche, title, api_key)
         except Exception as e:
             print(f"[captions] Claude API failed, using template: {e}")
-    return _template_captions(niche, title)
+            cap_a, cap_b = _template_captions(niche, title)
+    else:
+        cap_a, cap_b = _template_captions(niche, title)
+
+    if add_longform_cta:
+        cta   = _get_longform_cta(niche)
+        cap_a += cta
+        cap_b += cta
+
+    return cap_a, cap_b

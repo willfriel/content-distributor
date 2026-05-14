@@ -12,9 +12,10 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 
-from pipeline.sources  import get_candidates, NICHE_CONFIG
-from pipeline.captions import generate_captions
+from pipeline.sources   import get_candidates, NICHE_CONFIG
+from pipeline.captions  import generate_captions
 from pipeline.lumi_tales import NICHE_MAX_DURATION
+from pipeline.longform  import run_longform_for_niche, LONGFORM_SCHEDULE
 
 _scheduler: BackgroundScheduler | None = None
 _app = None  # set by init_scheduler; used by job wrappers so app is never pickled
@@ -57,6 +58,15 @@ def _job_scrape_and_learn():
 def _job_generate_lumi_story():
     from pipeline.lumi_tales import generate_and_store
     generate_and_store(_app)
+
+# Long-form wrappers
+def _job_longform_trading():    run_longform_for_niche("trading",    _app)
+def _job_longform_fitness():    run_longform_for_niche("fitness",    _app)
+def _job_longform_crime():      run_longform_for_niche("crime",      _app)
+def _job_longform_sports():     run_longform_for_niche("sports",     _app)
+def _job_longform_anatomy():    run_longform_for_niche("anatomy",    _app)
+def _job_longform_everything(): run_longform_for_niche("everything", _app)
+def _job_longform_kids():       run_longform_for_niche("kids",       _app)
 
 _JOB_FUNCS = {
     "trading":    _job_trading,
@@ -139,7 +149,7 @@ def run_pipeline_for_niche(niche: str, app):
             video_url = f"{base_url}/static/videos/{dest.name}"
             title     = pick.get("title", f"{niche} video")[:100]
 
-            cap_a, cap_b = generate_captions(niche, title)
+            cap_a, cap_b = generate_captions(niche, title, add_longform_cta=True)
 
             # Generate AI voiceover with random voice (learning system picks best over time)
             from integrations.elevenlabs import generate_voiceover, overlay_voiceover
@@ -469,6 +479,29 @@ def init_scheduler(app):
         replace_existing   = True,
         misfire_grace_time = 3600,
     )
+
+    # Long-form YouTube jobs — 2x/week per niche per LONGFORM_SCHEDULE
+    _LONGFORM_WRAPPERS = {
+        "trading":    _job_longform_trading,
+        "fitness":    _job_longform_fitness,
+        "crime":      _job_longform_crime,
+        "sports":     _job_longform_sports,
+        "anatomy":    _job_longform_anatomy,
+        "everything": _job_longform_everything,
+        "kids":       _job_longform_kids,
+    }
+    for lf_niche, slots in LONGFORM_SCHEDULE.items():
+        for idx, (dow, hour) in enumerate(slots):
+            _scheduler.add_job(
+                func               = _LONGFORM_WRAPPERS[lf_niche],
+                trigger            = "cron",
+                day_of_week        = dow,
+                hour               = hour,
+                minute             = 0,
+                id                 = f"longform_{lf_niche}_{idx}",
+                replace_existing   = True,
+                misfire_grace_time = 3600,
+            )
 
     _scheduler.start()
     print(f"[scheduler] Started — {len(NICHE_POST_TIMES)} daily jobs scheduled")
