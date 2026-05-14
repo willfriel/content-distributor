@@ -1036,6 +1036,16 @@ def _run_job(content_id: int, accounts: list, should_clip: bool,
         base_description = _inject_affiliate_links(item.description or "", niche_name, content_id)
 
         for account in accounts:
+            # Skip if this content was already posted to this account+platform
+            already_posted = PostMetrics.query.filter_by(
+                content_id = content_id,
+                account_id = account.id,
+                platform   = account.platform,
+            ).first()
+            if already_posted:
+                print(f"[_run_job] Skipping {account.platform}/{account.account_name} — already posted content #{content_id}")
+                continue
+
             creds   = account.get_credentials()
             caption = (account_caps or {}).get(account.id, base_description) or base_description
             # For A/B tests, still inject affiliate links into the variant caption
