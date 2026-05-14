@@ -4,8 +4,15 @@ from cryptography.fernet import Fernet
 
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-in-prod")
-    SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL", "postgresql://localhost/content_distributor")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    _raw_db_url = os.environ.get("DATABASE_URL", "sqlite:///content_distributor.db")
+    if _raw_db_url.startswith("postgres://"):
+        _raw_db_url = "postgresql+pg8000://" + _raw_db_url[len("postgres://"):]
+    elif _raw_db_url.startswith("postgresql://"):
+        _raw_db_url = "postgresql+pg8000://" + _raw_db_url[len("postgresql://"):]
+    SQLALCHEMY_DATABASE_URI = _raw_db_url
+    del _raw_db_url
 
     # Fernet key for encrypting stored credentials
     FERNET_KEY = os.environ.get("FERNET_KEY")

@@ -1,6 +1,6 @@
 flask==3.0.3
 flask-sqlalchemy==3.1.1
-psycopg2-binary==2.9.9
+pg8000==1.31.2
 cryptography==42.0.8
 requests==2.32.3
 google-api-python-client==2.133.0
