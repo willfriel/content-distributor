@@ -72,12 +72,33 @@ def _template_captions(niche: str, title: str) -> tuple[str, str]:
 
 def _claude_captions(niche: str, title: str, api_key: str) -> tuple[str, str]:
     import anthropic
-    tags = HASHTAGS.get(niche, "")
+    from pipeline.style_learner import get_style_guide
+
+    tags  = HASHTAGS.get(niche, "")
+    guide = get_style_guide(niche)
+    recs  = guide.get("recommendations", {}) if guide else {}
+
+    style_context = ""
+    if recs:
+        hooks    = recs.get("example_hooks", [])
+        length   = recs.get("caption_length", "short")
+        emojis   = recs.get("emoji_target", 1)
+        hashtags = recs.get("best_hashtags", [])
+        if hashtags:
+            tags = " ".join(hashtags)  # use learned hashtags over defaults
+        style_context = f"""
+Style guidelines learned from top-performing accounts in this niche:
+- Caption length: {length}
+- Average emojis per caption: {emojis}
+- Winning hook examples: {"; ".join(hooks[:3]) if hooks else "n/a"}
+- Use these hashtags: {tags}
+"""
+
     prompt = f"""You create viral short-form video captions for social media (TikTok, Instagram Reels, YouTube Shorts).
 
 Niche: {niche}
 Video title/topic: {title}
-
+{style_context}
 Write exactly 2 different caption variants for this video. Each should:
 - Be 1-2 punchy lines max (no more than 150 chars before hashtags)
 - Create curiosity, emotion, or FOMO — never describe what's in the video

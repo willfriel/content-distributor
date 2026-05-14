@@ -15,3 +15,4 @@ feedparser==6.0.11
 moviepy==1.0.3
 yt-dlp==2024.5.27
 elevenlabs==2.47.0
+instaloader==4.13.1

@@ -47,6 +47,12 @@ def _job_refresh_tokens():
     refresh_instagram_tokens()
     refresh_youtube_tokens()
 
+def _job_scrape_and_learn():
+    from integrations.instagram_scraper import scrape_all_accounts
+    from pipeline.style_learner import learn_all_niches
+    scrape_all_accounts(_app)
+    learn_all_niches(_app)
+
 _JOB_FUNCS = {
     "trading":    _job_trading,
     "fitness":    _job_fitness,
@@ -235,7 +241,7 @@ def init_scheduler(app):
             misfire_grace_time = 3600,
         )
 
-    # Refresh OAuth tokens every Monday at 3am UTC — well before 60-day Instagram expiry
+    # Refresh OAuth tokens every Monday at 3am UTC
     _scheduler.add_job(
         func               = _job_refresh_tokens,
         trigger            = "cron",
@@ -243,6 +249,18 @@ def init_scheduler(app):
         hour               = 3,
         minute             = 0,
         id                 = "token_refresh",
+        replace_existing   = True,
+        misfire_grace_time = 3600,
+    )
+
+    # Scrape reference accounts + re-learn style every Wednesday at 4am UTC
+    _scheduler.add_job(
+        func               = _job_scrape_and_learn,
+        trigger            = "cron",
+        day_of_week        = "wed",
+        hour               = 4,
+        minute             = 0,
+        id                 = "scrape_and_learn",
         replace_existing   = True,
         misfire_grace_time = 3600,
     )

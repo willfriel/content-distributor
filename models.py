@@ -217,6 +217,71 @@ class PipelineRun(db.Model):
         }
 
 
+class ReferenceAccount(db.Model):
+    """Instagram/YouTube accounts we scrape for style training."""
+    __tablename__ = "reference_accounts"
+
+    id             = db.Column(db.Integer, primary_key=True)
+    handle         = db.Column(db.String(200), unique=True, nullable=False)
+    platform       = db.Column(db.String(20), default="instagram")
+    niche_hint     = db.Column(db.String(100))   # null = applies to all niches
+    is_active      = db.Column(db.Boolean, default=True)
+    last_scraped_at = db.Column(db.DateTime)
+    post_count     = db.Column(db.Integer, default=0)
+    created_at     = db.Column(db.DateTime, default=datetime.utcnow)
+
+    posts = db.relationship("ScrapedPost", backref="account", lazy=True, cascade="all, delete-orphan")
+
+    def to_dict(self):
+        return {
+            "id": self.id, "handle": self.handle, "platform": self.platform,
+            "niche_hint": self.niche_hint, "is_active": self.is_active,
+            "post_count": self.post_count,
+            "last_scraped_at": self.last_scraped_at.isoformat() if self.last_scraped_at else None,
+        }
+
+
+class ScrapedPost(db.Model):
+    """A single post scraped from a reference account."""
+    __tablename__ = "scraped_posts"
+
+    id              = db.Column(db.Integer, primary_key=True)
+    account_id      = db.Column(db.Integer, db.ForeignKey("reference_accounts.id"), nullable=False)
+    shortcode       = db.Column(db.String(200), unique=True, nullable=False)
+    caption         = db.Column(db.Text)
+    hashtags        = db.Column(db.JSON, default=list)
+    likes           = db.Column(db.Integer, default=0)
+    comments        = db.Column(db.Integer, default=0)
+    views           = db.Column(db.Integer, default=0)
+    engagement_rate = db.Column(db.Float, default=0.0)
+    posted_at       = db.Column(db.DateTime)
+    scraped_at      = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id, "shortcode": self.shortcode, "caption": self.caption,
+            "hashtags": self.hashtags, "likes": self.likes, "comments": self.comments,
+            "views": self.views, "engagement_rate": self.engagement_rate,
+            "posted_at": self.posted_at.isoformat() if self.posted_at else None,
+        }
+
+
+class StyleGuide(db.Model):
+    """Learned style guidelines per niche, generated from scraped posts."""
+    __tablename__ = "style_guides"
+
+    id           = db.Column(db.Integer, primary_key=True)
+    niche        = db.Column(db.String(100), unique=True, nullable=False)
+    guidelines   = db.Column(db.JSON)   # rich dict of patterns
+    generated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "niche": self.niche, "guidelines": self.guidelines,
+            "generated_at": self.generated_at.isoformat(),
+        }
+
+
 class PostMetrics(db.Model):
     __tablename__ = "post_metrics"
 

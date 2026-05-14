@@ -1798,6 +1798,90 @@ def reset_budget():
 
 
 # ---------------------------------------------------------------------------
+# Reference account scraper + style learning
+# ---------------------------------------------------------------------------
+
+from models import ReferenceAccount, ScrapedPost, StyleGuide
+
+@app.route("/api/scraper/accounts", methods=["GET"])
+def list_reference_accounts():
+    accounts = ReferenceAccount.query.order_by(ReferenceAccount.created_at.desc()).all()
+    return jsonify([a.to_dict() for a in accounts])
+
+
+@app.route("/api/scraper/accounts", methods=["POST"])
+def add_reference_account():
+    data   = request.get_json(force=True)
+    handle = data.get("handle", "").lstrip("@").strip()
+    if not handle:
+        return _error("handle is required")
+    if ReferenceAccount.query.filter_by(handle=handle).first():
+        return _error(f"@{handle} already exists")
+    account = ReferenceAccount(
+        handle     = handle,
+        platform   = data.get("platform", "instagram"),
+        niche_hint = data.get("niche_hint"),
+    )
+    db.session.add(account)
+    db.session.commit()
+    return jsonify(account.to_dict()), 201
+
+
+@app.route("/api/scraper/accounts/<int:account_id>", methods=["DELETE"])
+def delete_reference_account(account_id):
+    account = ReferenceAccount.query.get_or_404(account_id)
+    db.session.delete(account)
+    db.session.commit()
+    return jsonify({"deleted": True})
+
+
+@app.route("/api/scraper/run", methods=["POST"])
+def run_scraper():
+    """Trigger a full scrape + style learning run in the background."""
+    import threading
+    def _run():
+        from integrations.instagram_scraper import scrape_all_accounts
+        from pipeline.style_learner import learn_all_niches
+        scrape_all_accounts(app)
+        learn_all_niches(app)
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"status": "scrape started"})
+
+
+@app.route("/api/scraper/style-guides", methods=["GET"])
+def get_style_guides():
+    guides = StyleGuide.query.all()
+    return jsonify([g.to_dict() for g in guides])
+
+
+def _seed_reference_accounts():
+    """Seed the initial reference accounts for style training."""
+    defaults = [
+        # Sports
+        ("lamarsnackson",        "instagram", "sports"),
+        ("definingsportsmoments","instagram", "sports"),
+        ("courtlinemedia",       "instagram", "sports"),
+        # Everything / viral
+        ("bxllertoonz",          "instagram", None),
+        ("blackgreninja1",       "instagram", None),
+        ("technerd_stewie",      "instagram", None),
+        ("bestofkick_",          "instagram", None),
+        ("bleacherreport",       "instagram", None),
+        ("houseofhighlights",    "instagram", None),
+        ("passionbeam",          "instagram", None),
+        ("thelighthatburnsthesky","instagram", None),
+        # Trading
+        ("mrkt_ai",              "instagram", "trading"),
+    ]
+    for handle, platform, niche_hint in defaults:
+        if not ReferenceAccount.query.filter_by(handle=handle).first():
+            db.session.add(ReferenceAccount(
+                handle=handle, platform=platform, niche_hint=niche_hint
+            ))
+    db.session.commit()
+
+
+# ---------------------------------------------------------------------------
 # Link click tracking
 # ---------------------------------------------------------------------------
 
