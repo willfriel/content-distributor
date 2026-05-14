@@ -24,27 +24,6 @@ app = Flask(__name__)
 app.config.from_object(Config)
 db.init_app(app)
 
-# Run DB setup + scheduler when loaded by Gunicorn (not just __main__)
-with app.app_context():
-    try:
-        db.create_all()
-        # inline migration so Gunicorn workers don't crash on missing columns
-        import sqlalchemy as _sa
-        _insp = _sa.inspect(db.engine)
-        with db.engine.connect() as _conn:
-            for _tbl, _col, _sql in [
-                ("link_clicks", "content_id",
-                 "ALTER TABLE link_clicks ADD COLUMN content_id INTEGER REFERENCES content_queue(id)")
-            ]:
-                try:
-                    _existing = [c["name"] for c in _insp.get_columns(_tbl)]
-                    if _col not in _existing:
-                        _conn.execute(_sa.text(_sql))
-                        _conn.commit()
-                except Exception:
-                    pass
-    except Exception:
-        pass  # DB not ready yet (first deploy) — migrations run after
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ services:
     env: python
     plan: starter          # $7/mo — needed for always-on (free tier spins down)
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn server:app --workers 2 --bind 0.0.0.0:$PORT --timeout 120
+    startCommand: gunicorn wsgi:app --workers 1 --bind 0.0.0.0:$PORT --timeout 120
     healthCheckPath: /
     envVars:
       - key: DATABASE_URL
