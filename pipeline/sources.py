@@ -20,42 +20,56 @@ NICHE_CONFIG = {
         "subreddits":      ["wallstreetbets", "investing", "CryptoCurrency"],
         "rss_feeds":       ["https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US"],
         "keywords":        ["trading", "crypto", "stocks", "market", "investing"],
+        "twitch_streamers": [],
+        "twitch_games":     ["Science & Technology"],
     },
     "fitness": {
         "youtube_queries": ["fitness tips short", "workout motivation shorts", "nutrition advice gym"],
         "subreddits":      ["fitness", "gym", "bodybuilding"],
         "rss_feeds":       ["https://www.menshealth.com/rss/all.xml"],
         "keywords":        ["workout", "fitness", "gym", "nutrition", "health"],
+        "twitch_streamers": ["jujimufu", "ldlc_kawhi", "naturally_stefany"],
+        "twitch_games":     ["Fitness & Health"],
     },
     "crime": {
         "youtube_queries": ["true crime short", "unsolved mystery short", "cold case story"],
         "subreddits":      ["UnresolvedMysteries", "TrueCrime", "mystery"],
         "rss_feeds":       ["https://feeds.megaphone.fm/CSN4919452500"],
         "keywords":        ["crime", "mystery", "unsolved", "cold case", "thriller"],
+        "twitch_streamers": [],
+        "twitch_games":     ["Grand Theft Auto V", "Demonologist"],
     },
     "sports": {
         "youtube_queries": ["sports moments shorts", "best sports plays", "athlete story short"],
         "subreddits":      ["sports", "nba", "soccer"],
         "rss_feeds":       ["https://www.espn.com/espn/rss/news"],
         "keywords":        ["sports", "athlete", "game", "championship", "highlights"],
+        "twitch_streamers": ["espn", "nba", "nfl"],
+        "twitch_games":     ["EA Sports FC 25", "NBA 2K25", "Madden NFL 25"],
     },
     "anatomy": {
         "youtube_queries": ["anatomy explained short", "medical facts shorts", "human body science"],
         "subreddits":      ["medicine", "anatomy", "biology"],
         "rss_feeds":       ["https://medlineplus.gov/rss.html"],
         "keywords":        ["anatomy", "physiology", "medical", "body", "science"],
+        "twitch_streamers": [],
+        "twitch_games":     ["Science & Technology"],
     },
     "everything": {
         "youtube_queries": ["viral short 2025", "funny moments shorts", "interesting facts short"],
         "subreddits":      ["interestingasfuck", "oddlysatisfying", "nextfuckinglevel"],
         "rss_feeds":       [],
         "keywords":        ["viral", "interesting", "funny", "satisfying", "amazing"],
+        "twitch_streamers": ["xqc", "moistcr1tikal", "northernlion", "hasanabi"],
+        "twitch_games":     ["Just Chatting"],
     },
     "kids": {
         "youtube_queries": ["kids story short", "cartoon funny short", "children education short"],
         "subreddits":      ["KidsAreFuckingStupid", "aww"],
         "rss_feeds":       [],
         "keywords":        ["kids", "children", "cartoon", "story", "fun"],
+        "twitch_streamers": ["graystillplays", "stampylonghead"],
+        "twitch_games":     ["Minecraft", "Just Dance 2024 Edition", "Fortnite"],
     },
 }
 
@@ -173,6 +187,40 @@ def fetch_rss_topics(niche: str, max_results: int = 3) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Twitch source
+# ---------------------------------------------------------------------------
+
+def fetch_twitch_candidates(niche: str, max_results: int = 5) -> list[dict]:
+    """Fetch top clips from Twitch streamers and game categories for the niche."""
+    config    = NICHE_CONFIG.get(niche, {})
+    streamers = config.get("twitch_streamers", [])
+    games     = config.get("twitch_games", [])
+
+    if not streamers and not games:
+        return []
+
+    try:
+        from integrations.twitch import get_clips_by_streamer, get_clips_by_game
+    except ImportError:
+        return []
+
+    candidates = []
+
+    # Pick one random streamer and one random game to keep variety
+    if streamers:
+        streamer = random.choice(streamers)
+        candidates += get_clips_by_streamer(streamer, niche, max_results=3)
+
+    if games:
+        game = random.choice(games)
+        candidates += get_clips_by_game(game, niche, max_results=3)
+
+    # Sort by view count so the most viral clips surface first
+    candidates.sort(key=lambda c: c.get("views", 0), reverse=True)
+    return candidates[:max_results]
+
+
+# ---------------------------------------------------------------------------
 # AI-generated stub (activated when Higgsfield/ElevenLabs subscriptions are set)
 # ---------------------------------------------------------------------------
 
@@ -201,6 +249,9 @@ def get_candidates(niche: str, youtube_api_key: str = None) -> list[dict]:
     # YouTube CC clips (best quality, direct video URL)
     if youtube_api_key:
         candidates += fetch_youtube_candidates(niche, youtube_api_key)
+
+    # Twitch clips (viral, short-form, perfect for repurposing)
+    candidates += fetch_twitch_candidates(niche)
 
     # Reddit video posts
     candidates += fetch_reddit_candidates(niche)

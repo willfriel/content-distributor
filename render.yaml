@@ -39,6 +39,10 @@ services:
         sync: false
       - key: ELEVENLABS_API_KEY
         sync: false
+      - key: TWITCH_CLIENT_ID
+        sync: false
+      - key: TWITCH_CLIENT_SECRET
+        sync: false
 
 databases:
   - name: content-distributor-db

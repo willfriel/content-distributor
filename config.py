@@ -36,6 +36,10 @@ class Config:
     TIKTOK_CLIENT_KEY = os.environ.get("TIKTOK_CLIENT_KEY")
     TIKTOK_CLIENT_SECRET = os.environ.get("TIKTOK_CLIENT_SECRET")
 
+    # Twitch
+    TWITCH_CLIENT_ID = os.environ.get("TWITCH_CLIENT_ID")
+    TWITCH_CLIENT_SECRET = os.environ.get("TWITCH_CLIENT_SECRET")
+
     # Telegram (optional notifications)
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
