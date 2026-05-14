@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: content-distributor
+    env: python
+    plan: starter          # $7/mo — needed for always-on (free tier spins down)
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app --workers 2 --bind 0.0.0.0:$PORT --timeout 120
+    healthCheckPath: /
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: content-distributor-db
+          property: connectionString
+      - key: FERNET_KEY
+        sync: false        # set manually in Render dashboard
+      - key: SECRET_KEY
+        generateValue: true
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_REDIRECT_URI
+        value: https://content-distributor.onrender.com/auth/youtube/callback
+      - key: INSTAGRAM_APP_ID
+        sync: false
+      - key: INSTAGRAM_APP_SECRET
+        sync: false
+      - key: INSTAGRAM_REDIRECT_URI
+        value: https://content-distributor.onrender.com/auth/instagram/callback
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: BASE_URL
+        value: https://content-distributor.onrender.com
+      - key: OPUSCLIP_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+
+databases:
+  - name: content-distributor-db
+    plan: free
