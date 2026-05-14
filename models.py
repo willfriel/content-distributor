@@ -35,6 +35,7 @@ class SocialAccount(db.Model):
     encrypted_credentials = db.Column(db.Text)
     is_active            = db.Column(db.Boolean, default=True)
     needs_reauth         = db.Column(db.Boolean, default=False)
+    token_expires_at     = db.Column(db.DateTime, nullable=True)
     created_at           = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at           = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

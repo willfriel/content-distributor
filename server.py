@@ -744,8 +744,10 @@ def instagram_assign_accounts():
         else:
             account.account_name = ig_username
 
-        account.is_active    = True
-        account.needs_reauth = False
+        from datetime import timedelta
+        account.is_active        = True
+        account.needs_reauth     = False
+        account.token_expires_at = datetime.utcnow() + timedelta(days=58)  # refresh before 60-day expiry
         account.set_credentials({"access_token": creds_base["access_token"], "instagram_user_id": ig_id})
         saved.append(f"@{ig_username} → {niche_name}")
 
@@ -765,6 +767,98 @@ def instagram_assign_accounts():
     <p><a href="/">Back to dashboard</a></p>
     </div></body></html>
     """, saved=saved)
+
+
+# ---------------------------------------------------------------------------
+# Token auto-refresh
+# ---------------------------------------------------------------------------
+
+_IG_GRAPH = "https://graph.instagram.com"
+
+def refresh_instagram_tokens():
+    """
+    Refresh all Instagram long-lived tokens that expire within 30 days.
+    Instagram tokens last 60 days and can be refreshed anytime after day 1.
+    Called by the scheduler weekly.
+    """
+    with app.app_context():
+        from datetime import timedelta
+        cutoff   = datetime.utcnow() + timedelta(days=30)
+        accounts = SocialAccount.query.filter(
+            SocialAccount.platform    == "instagram",
+            SocialAccount.is_active   == True,
+            SocialAccount.needs_reauth == False,
+        ).filter(
+            db.or_(
+                SocialAccount.token_expires_at == None,
+                SocialAccount.token_expires_at <= cutoff,
+            )
+        ).all()
+
+        refreshed = 0
+        for account in accounts:
+            try:
+                creds = account.get_credentials()
+                token = creds.get("access_token")
+                if not token:
+                    continue
+                r = http_requests.get(
+                    f"{_IG_GRAPH}/refresh_access_token",
+                    params={"grant_type": "ig_refresh_token", "access_token": token},
+                    timeout=15,
+                )
+                if r.ok:
+                    new_token = r.json().get("access_token", token)
+                    creds["access_token"]    = new_token
+                    account.set_credentials(creds)
+                    account.token_expires_at = datetime.utcnow() + timedelta(days=58)
+                    refreshed += 1
+                    print(f"[tokens] Refreshed Instagram token for @{account.account_name}")
+                else:
+                    account.needs_reauth = True
+                    _telegram_notify(f"⚠️ Instagram token expired for @{account.account_name} — needs reconnect")
+                    print(f"[tokens] Refresh failed for @{account.account_name}: {r.text}")
+            except Exception as e:
+                print(f"[tokens] Error refreshing @{account.account_name}: {e}")
+
+        db.session.commit()
+        print(f"[tokens] Instagram refresh complete — {refreshed}/{len(accounts)} refreshed")
+
+
+def refresh_youtube_tokens():
+    """
+    Touch all YouTube accounts to trigger google-auth refresh and save updated tokens back to DB.
+    Called by the scheduler weekly.
+    """
+    with app.app_context():
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+
+        accounts = SocialAccount.query.filter_by(
+            platform="youtube", is_active=True, needs_reauth=False
+        ).all()
+
+        for account in accounts:
+            try:
+                creds_dict = account.get_credentials()
+                creds = Credentials(
+                    token         = creds_dict.get("access_token"),
+                    refresh_token = creds_dict.get("refresh_token"),
+                    token_uri     = "https://oauth2.googleapis.com/token",
+                    client_id     = creds_dict.get("client_id"),
+                    client_secret = creds_dict.get("client_secret"),
+                )
+                if creds.refresh_token:
+                    creds.refresh(Request())
+                    creds_dict["access_token"] = creds.token
+                    account.set_credentials(creds_dict)
+                    print(f"[tokens] Refreshed YouTube token for {account.account_name}")
+            except Exception as e:
+                account.needs_reauth = True
+                _telegram_notify(f"⚠️ YouTube token expired for {account.account_name} — needs reconnect")
+                print(f"[tokens] YouTube refresh failed for {account.account_name}: {e}")
+
+        db.session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -1831,9 +1925,10 @@ def _migrate():
     import sqlalchemy as sa
     inspector = sa.inspect(db.engine)
     migrations = [
-        ("link_clicks",  "content_id",  "ALTER TABLE link_clicks ADD COLUMN content_id INTEGER REFERENCES content_queue(id)"),
-        ("post_metrics", "voice_id",    "ALTER TABLE post_metrics ADD COLUMN voice_id VARCHAR(100)"),
-        ("post_metrics", "voice_name",  "ALTER TABLE post_metrics ADD COLUMN voice_name VARCHAR(200)"),
+        ("link_clicks",    "content_id",      "ALTER TABLE link_clicks ADD COLUMN content_id INTEGER REFERENCES content_queue(id)"),
+        ("post_metrics",   "voice_id",         "ALTER TABLE post_metrics ADD COLUMN voice_id VARCHAR(100)"),
+        ("post_metrics",   "voice_name",        "ALTER TABLE post_metrics ADD COLUMN voice_name VARCHAR(200)"),
+        ("social_accounts","token_expires_at",  "ALTER TABLE social_accounts ADD COLUMN token_expires_at TIMESTAMP"),
     ]
     with db.engine.connect() as conn:
         for table, col, sql in migrations:

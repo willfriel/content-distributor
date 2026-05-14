@@ -42,6 +42,11 @@ def _job_anatomy():    run_pipeline_for_niche("anatomy",    _app)
 def _job_everything(): run_pipeline_for_niche("everything", _app)
 def _job_kids():       run_pipeline_for_niche("kids",       _app)
 
+def _job_refresh_tokens():
+    from server import refresh_instagram_tokens, refresh_youtube_tokens
+    refresh_instagram_tokens()
+    refresh_youtube_tokens()
+
 _JOB_FUNCS = {
     "trading":    _job_trading,
     "fitness":    _job_fitness,
@@ -221,14 +226,26 @@ def init_scheduler(app):
 
     for niche, (hour, minute) in NICHE_POST_TIMES.items():
         _scheduler.add_job(
-            func             = _JOB_FUNCS[niche],
-            trigger          = "cron",
-            hour             = hour,
-            minute           = minute,
-            id               = f"pipeline_{niche}",
-            replace_existing = True,
+            func               = _JOB_FUNCS[niche],
+            trigger            = "cron",
+            hour               = hour,
+            minute             = minute,
+            id                 = f"pipeline_{niche}",
+            replace_existing   = True,
             misfire_grace_time = 3600,
         )
+
+    # Refresh OAuth tokens every Monday at 3am UTC — well before 60-day Instagram expiry
+    _scheduler.add_job(
+        func               = _job_refresh_tokens,
+        trigger            = "cron",
+        day_of_week        = "mon",
+        hour               = 3,
+        minute             = 0,
+        id                 = "token_refresh",
+        replace_existing   = True,
+        misfire_grace_time = 3600,
+    )
 
     _scheduler.start()
     print(f"[scheduler] Started — {len(NICHE_POST_TIMES)} daily jobs scheduled")
