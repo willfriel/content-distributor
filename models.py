@@ -229,6 +229,8 @@ class PostMetrics(db.Model):
     content_type       = db.Column(db.String(50), default="general")
     ab_test_id         = db.Column(db.Integer, db.ForeignKey("ab_tests.id"), nullable=True)
     ab_variant         = db.Column(db.String(10))
+    voice_id           = db.Column(db.String(100))
+    voice_name         = db.Column(db.String(200))
 
     views              = db.Column(db.Integer, default=0)
     likes              = db.Column(db.Integer, default=0)
@@ -256,6 +258,7 @@ class PostMetrics(db.Model):
             "niche": self.niche, "platform": self.platform, "post_id": self.post_id,
             "caption": self.caption, "content_type": self.content_type,
             "ab_test_id": self.ab_test_id, "ab_variant": self.ab_variant,
+            "voice_id": self.voice_id, "voice_name": self.voice_name,
             "views": self.views, "likes": self.likes, "comments": self.comments,
             "shares": self.shares, "saves": self.saves, "reach": self.reach,
             "engagement_score": self.engagement_score,

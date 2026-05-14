@@ -124,6 +124,17 @@ def run_pipeline_for_niche(niche: str, app):
 
             cap_a, cap_b = generate_captions(niche, title)
 
+            # Generate AI voiceover with random voice (learning system picks best over time)
+            from integrations.elevenlabs import generate_voiceover, overlay_voiceover
+            audio_path, chosen_voice_id, chosen_voice_name = generate_voiceover(
+                text=title, niche=niche, db_session=db.session
+            )
+            if audio_path and str(dest).endswith(".mp4"):
+                voiced = overlay_voiceover(str(dest), audio_path)
+                if voiced:
+                    import shutil
+                    shutil.move(voiced, str(dest))
+
             item = ContentQueue(
                 niche_id       = niche_obj.id,
                 video_url      = video_url,
@@ -145,6 +156,8 @@ def run_pipeline_for_niche(niche: str, app):
                 account_caps = {a.id: caption_variants[i % 2] for i, a in enumerate(accounts)},
                 account_vars = {a.id: "A" if i % 2 == 0 else "B" for i, a in enumerate(accounts)},
                 ab_test_id   = None,
+                voice_id     = chosen_voice_id,
+                voice_name   = chosen_voice_name,
             )
 
             budget = CreditBudget.query.filter_by(service="posts_per_day", niche=niche).first()

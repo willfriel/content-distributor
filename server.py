@@ -902,7 +902,8 @@ def quick_upload():
 
 def _run_job(content_id: int, accounts: list, should_clip: bool,
              content_type: str = "general", ab_test_id: int = None,
-             account_caps: dict = None, account_vars: dict = None):
+             account_caps: dict = None, account_vars: dict = None,
+             voice_id: str = None, voice_name: str = None):
     """Execute OpusClip + uploads for a content item. Runs in a thread or inline."""
     with app.app_context():
         item   = ContentQueue.query.get(content_id)
@@ -974,6 +975,8 @@ def _run_job(content_id: int, accounts: list, should_clip: bool,
                             content_type = content_type,
                             ab_test_id   = ab_test_id,
                             ab_variant   = variant,
+                            voice_id     = voice_id,
+                            voice_name   = voice_name,
                         )
                         db.session.add(pm)
 
@@ -1318,15 +1321,23 @@ def insights_api():
         key=lambda x: x["avg_engagement"], reverse=True
     )
 
+    # Voice performance per niche
+    from integrations.elevenlabs import get_voice_insights
+    voice_insights = {
+        niche: get_voice_insights(niche, db.session)
+        for niche in [r.niche for r in niche_rows if r.niche]
+    }
+
     return jsonify({
         "total_posts":     total_posts,
         "avg_engagement":  round(float(avg_engagement), 4),
         "best_niche":      best_niche,
         "active_ab_tests": ABTest.query.filter_by(status="running").count(),
         "niche_stats":     niche_stats,
-        "top_posts":       [p.to_dict() for p in top_posts],
+        "top_posts":       top_posts,
         "ab_tests":        [t.to_dict() for t in ab_tests],
         "content_types":   content_types,
+        "voice_insights":  voice_insights,
     })
 
 
@@ -1820,8 +1831,9 @@ def _migrate():
     import sqlalchemy as sa
     inspector = sa.inspect(db.engine)
     migrations = [
-        ("link_clicks", "content_id",
-         "ALTER TABLE link_clicks ADD COLUMN content_id INTEGER REFERENCES content_queue(id)"),
+        ("link_clicks",  "content_id",  "ALTER TABLE link_clicks ADD COLUMN content_id INTEGER REFERENCES content_queue(id)"),
+        ("post_metrics", "voice_id",    "ALTER TABLE post_metrics ADD COLUMN voice_id VARCHAR(100)"),
+        ("post_metrics", "voice_name",  "ALTER TABLE post_metrics ADD COLUMN voice_name VARCHAR(200)"),
     ]
     with db.engine.connect() as conn:
         for table, col, sql in migrations:
