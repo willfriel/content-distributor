@@ -230,7 +230,7 @@ NICHE_MAX_DURATION = {
     "fitness":    None,
     "crime":      None,
     "sports":     None,
-    "anatomy":    None,
+    "gaming":     None,
     "everything": None,
     "kids_short": None,
     "kids_full":  None,

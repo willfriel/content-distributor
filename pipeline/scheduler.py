@@ -26,7 +26,7 @@ NICHE_POST_TIMES = {
     "fitness":    (11, 0),
     "crime":      (1,  0),
     "sports":     (17, 0),
-    "anatomy":    (15, 0),
+    "gaming":     (15, 0),
     "everything": (19, 0),
     "kids":       (21, 0),
 }
@@ -40,7 +40,7 @@ def _job_trading():    run_pipeline_for_niche("trading",    _app)
 def _job_fitness():    run_pipeline_for_niche("fitness",    _app)
 def _job_crime():      run_pipeline_for_niche("crime",      _app)
 def _job_sports():     run_pipeline_for_niche("sports",     _app)
-def _job_anatomy():    run_pipeline_for_niche("anatomy",    _app)
+def _job_gaming():     run_pipeline_for_niche("gaming",     _app)
 def _job_everything(): run_pipeline_for_niche("everything", _app)
 def _job_kids():       run_kids_pipeline(_app)
 
@@ -64,7 +64,7 @@ def _job_longform_trading():    run_longform_for_niche("trading",    _app)
 def _job_longform_fitness():    run_longform_for_niche("fitness",    _app)
 def _job_longform_crime():      run_longform_for_niche("crime",      _app)
 def _job_longform_sports():     run_longform_for_niche("sports",     _app)
-def _job_longform_anatomy():    run_longform_for_niche("anatomy",    _app)
+def _job_longform_gaming():     run_longform_for_niche("gaming",     _app)
 def _job_longform_everything(): run_longform_for_niche("everything", _app)
 def _job_longform_kids():       run_longform_for_niche("kids",       _app)
 
@@ -73,7 +73,7 @@ _JOB_FUNCS = {
     "fitness":    _job_fitness,
     "crime":      _job_crime,
     "sports":     _job_sports,
-    "anatomy":    _job_anatomy,
+    "gaming":     _job_gaming,
     "everything": _job_everything,
     "kids":       _job_kids,
 }

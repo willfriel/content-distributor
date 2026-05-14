@@ -28,13 +28,13 @@ LONGFORM_FORMATS = {
                         "stockmarket", "tradingsetup", "technicalanalysis", "finance"],
     },
     "fitness": {
-        "format":      "workout_guide",
-        "title_style": "The Complete Guide to [Exercise] — Do This, Not That",
-        "structure":   ["hook", "why_it_matters", "common_mistakes", "correct_form",
-                        "progressive_overload", "sample_routine", "results"],
+        "format":      "fitness_and_mindset",
+        "title_style": "The Complete Guide to [Topic] — Body AND Mind",
+        "structure":   ["hook", "why_it_matters", "the_mental_side", "common_mistakes",
+                        "correct_approach", "daily_habits", "results"],
         "target_mins": 12,
-        "tags":        ["fitness", "workout", "gym", "bodybuilding", "exercise", "health",
-                        "gains", "nutrition", "weightlifting", "personaltrainer"],
+        "tags":        ["fitness", "workout", "gym", "mindset", "selfimprovement", "discipline",
+                        "motivation", "habits", "mentalhealth", "grindset"],
     },
     "crime": {
         "format":      "case_breakdown",
@@ -54,14 +54,14 @@ LONGFORM_FORMATS = {
         "tags":        ["sports", "nba", "nfl", "soccer", "athlete", "highlights",
                         "sportsstories", "basketball", "football", "goat"],
     },
-    "anatomy": {
-        "format":      "educational_deep_dive",
-        "title_style": "How Your [Body Part] Actually Works — You Won't Believe This",
-        "structure":   ["hook", "basic_function", "surprising_facts",
-                        "what_goes_wrong", "how_to_optimize", "key_takeaways"],
+    "gaming": {
+        "format":      "gaming_story",
+        "title_style": "The Most Insane [Game/Moment] Story Nobody Told You",
+        "structure":   ["hook", "the_setup", "the_grind", "the_moment",
+                        "the_reaction", "the_legacy", "what_it_means"],
         "target_mins": 10,
-        "tags":        ["anatomy", "biology", "medicine", "health", "science",
-                        "humanbody", "medicalfacts", "education", "physiology", "wellness"],
+        "tags":        ["gaming", "gamer", "twitch", "esports", "gameplay", "streamer",
+                        "gamingmoments", "viral", "funny", "highlights"],
     },
     "everything": {
         "format":      "compilation",
@@ -90,7 +90,7 @@ LONGFORM_SCHEDULE = {
     "fitness":    [("mon", 14), ("thu", 14)],
     "crime":      [("mon", 20), ("thu", 20)],
     "sports":     [("tue", 16), ("fri", 16)],
-    "anatomy":    [("tue", 18), ("fri", 18)],
+    "gaming":     [("tue", 18), ("fri", 18)],
     "everything": [("wed", 17), ("sat", 17)],
     "kids":       [("wed", 20), ("sat", 20)],
 }
@@ -168,10 +168,10 @@ Reply in this EXACT JSON format (nothing else):
 def _default_topic(niche: str) -> str:
     topics = {
         "trading":    "a high-probability breakout trade setup using price action",
-        "fitness":    "the most overlooked compound movement that builds total body strength",
+        "fitness":    "why discipline beats motivation every time — and how to build it from scratch",
         "crime":      "a cold case that was solved decades later by a single overlooked clue",
         "sports":     "an underdog athlete who defied every prediction to become a legend",
-        "anatomy":    "the human heart and the shocking things it does that most people don't know",
+        "gaming":     "the most insane clutch moment in competitive gaming history and what made it possible",
         "everything": "the top viral moments that broke the internet this week",
         "kids":       "a friendly little bear who learns that being different is a superpower",
     }

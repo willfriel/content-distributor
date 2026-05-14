@@ -20,6 +20,9 @@ TEMPLATES = {
         ["Stop doing this at the gym ❌ do THIS instead ✅", "The fitness advice nobody tells you 🏋️"],
         ["Why you're not seeing results yet 😤", "One change that doubled my gains 💪"],
         ["The workout secret trainers don't want you to know 👀", "Do this every morning and watch what happens 🌅"],
+        ["Fitness isn't just body — it's mind too 🧠💪", "The mental side of getting in shape nobody talks about"],
+        ["Your habits are building you or breaking you 🔨", "Discipline is just self-respect in disguise 👊"],
+        ["The reason you keep quitting has nothing to do with willpower 🧠", "One mindset shift that changes everything 🌅"],
     ],
     "crime": [
         ["This case was never solved… until now 🔍", "The detail that broke this case wide open 😨"],
@@ -31,10 +34,10 @@ TEMPLATES = {
         ["Athletes don't talk about this side of the sport 😤", "This play made the whole stadium go silent 🤫"],
         ["The underdog story nobody saw coming 👊", "One play. Season over. 💔"],
     ],
-    "anatomy": [
-        ["Your body is doing THIS right now and you don't even know 🤯", "The organ doctors don't tell you enough about 🧬"],
-        ["This is why you feel that way 🧠", "The human body fact that breaks people's brains 💥"],
-        ["What happens inside your body when you do this 👀", "Scientists just discovered this about the human body 🔬"],
+    "gaming": [
+        ["Nobody believed he could do this 🎮😤", "The clip that broke the internet overnight 💀"],
+        ["POV: you finally hit that rank you've been grinding for 🏆", "This play should not have worked. It worked. 🤯"],
+        ["Bro really did that on stream 💀", "The moment every gamer dreams about 🎮✨"],
     ],
     "everything": [
         ["You won't believe this actually happened 😭", "The internet needed to see this today 💀"],
@@ -50,10 +53,10 @@ TEMPLATES = {
 
 HASHTAGS = {
     "trading":  "#trading #crypto #stocks #investing #finance #stockmarket #daytrading #forex #wealth #money #fyp #foryou",
-    "fitness":  "#fitness #gym #workout #health #gains #motivation #bodybuilding #nutrition #fitlife #foryou #fyp",
+    "fitness":  "#fitness #gym #workout #health #gains #motivation #mindset #discipline #selfimprovement #grindset #foryou #fyp",
     "crime":    "#truecrime #crime #mystery #unsolved #coldcase #criminal #thriller #darkweb #detective #fyp",
     "sports":   "#sports #nba #soccer #football #athlete #highlights #champion #viral #fyp #foryoupage",
-    "anatomy":  "#anatomy #biology #medicine #health #science #medstudent #humanbody #medicalfacts #fyp",
+    "gaming":   "#gaming #gamer #twitch #fyp #foryou #viral #gameplay #esports #gamingmoments #streamer",
     "everything": "#viral #trending #funny #relatable #foryou #fyp #memes #entertainment #satisfying",
     "kids":     "#kids #storytime #children #cartoon #family #education #fun #imagination #fyp",
 }

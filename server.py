@@ -2082,7 +2082,7 @@ def _seed_niches():
         ("fitness",    "Fitness"),
         ("crime",      "Crime / Horror / Mystery"),
         ("sports",     "Sports"),
-        ("anatomy",    "Anatomy & Physiology"),
+        ("gaming",     "Gaming"),
         ("everything", "Everything"),
         ("kids",       "Kids"),
     ]
@@ -2118,6 +2118,15 @@ def _migrate():
         ("post_metrics",   "voice_name",        "ALTER TABLE post_metrics ADD COLUMN voice_name VARCHAR(200)"),
         ("social_accounts","token_expires_at",  "ALTER TABLE social_accounts ADD COLUMN token_expires_at TIMESTAMP"),
     ]
+    # Rename anatomy → gaming niche in place
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(sa.text(
+                "UPDATE niches SET name='gaming', display_name='Gaming' WHERE name='anatomy'"
+            ))
+            conn.commit()
+    except Exception:
+        pass
     with db.engine.connect() as conn:
         for table, col, sql in migrations:
             try:

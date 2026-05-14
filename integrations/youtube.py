@@ -29,7 +29,7 @@ CATEGORY_IDS = {
     "fitness":    "17",  # Sports
     "crime":      "22",
     "sports":     "17",
-    "anatomy":    "27",  # Education
+    "gaming":     "20",  # Gaming
     "everything": "22",
     "kids":       "1",   # Film & Animation
 }

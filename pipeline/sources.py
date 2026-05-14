@@ -24,10 +24,11 @@ NICHE_CONFIG = {
         "twitch_games":     ["Science & Technology"],
     },
     "fitness": {
-        "youtube_queries": ["fitness tips short", "workout motivation shorts", "nutrition advice gym"],
-        "subreddits":      ["fitness", "gym", "bodybuilding"],
+        "youtube_queries": ["fitness tips short", "workout motivation shorts", "nutrition advice gym",
+                            "mindset motivation short", "self improvement shorts", "discipline habits short"],
+        "subreddits":      ["fitness", "gym", "bodybuilding", "selfimprovement", "motivation"],
         "rss_feeds":       ["https://www.menshealth.com/rss/all.xml"],
-        "keywords":        ["workout", "fitness", "gym", "nutrition", "health"],
+        "keywords":        ["workout", "fitness", "gym", "nutrition", "health", "mindset", "discipline", "habits"],
         "twitch_streamers": ["jujimufu", "ldlc_kawhi", "naturally_stefany"],
         "twitch_games":     ["Fitness & Health"],
     },
@@ -47,13 +48,14 @@ NICHE_CONFIG = {
         "twitch_streamers": ["espn", "nba", "nfl"],
         "twitch_games":     ["EA Sports FC 25", "NBA 2K25", "Madden NFL 25"],
     },
-    "anatomy": {
-        "youtube_queries": ["anatomy explained short", "medical facts shorts", "human body science"],
-        "subreddits":      ["medicine", "anatomy", "biology"],
-        "rss_feeds":       ["https://medlineplus.gov/rss.html"],
-        "keywords":        ["anatomy", "physiology", "medical", "body", "science"],
-        "twitch_streamers": [],
-        "twitch_games":     ["Science & Technology"],
+    "gaming": {
+        "youtube_queries": ["gaming moments shorts", "funny gaming clip", "speedrun world record short",
+                            "gaming fail shorts", "best plays gaming short"],
+        "subreddits":      ["gaming", "LivestreamFail", "pcgaming", "Unexpected"],
+        "rss_feeds":       [],
+        "keywords":        ["gaming", "gamer", "gameplay", "twitch", "esports", "streamer"],
+        "twitch_streamers": ["shroud", "summit1g", "asmongold", "moistcr1tikal", "xqc"],
+        "twitch_games":     ["Fortnite", "Valorant", "Minecraft", "Apex Legends", "Call of Duty: Warzone"],
     },
     "everything": {
         "youtube_queries": ["viral short 2025", "funny moments shorts", "interesting facts short"],
@@ -195,8 +197,9 @@ def fetch_rss_topics(niche: str, max_results: int = 3) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 PEXELS_QUERIES = {
-    "fitness":    ["gym workout", "exercise form", "weightlifting", "running athlete", "yoga"],
-    "anatomy":    ["human body", "heartbeat medical", "brain neuron", "blood cells", "muscle anatomy"],
+    "fitness":    ["gym workout", "exercise form", "weightlifting", "running athlete", "yoga",
+                   "meditation focus", "sunrise motivation", "journaling mindset"],
+    "gaming":     ["gaming setup", "neon gaming room", "controller hands", "esports arena", "rgb pc"],
     "sports":     ["sports highlights", "basketball dunk", "soccer goal", "athlete training"],
     "everything": ["satisfying", "nature timelapse", "city life", "funny animal"],
     "kids":       ["children playing", "colorful cartoon", "kid learning", "family fun"],
@@ -358,8 +361,8 @@ def get_candidates(niche: str, youtube_api_key: str = None) -> list[dict]:
     # Twitch clips (viral, short-form)
     candidates += fetch_twitch_candidates(niche)
 
-    # Pexels stock video (fitness, anatomy — needs real b-roll)
-    if niche in ("fitness", "anatomy", "sports", "kids", "trading"):
+    # Pexels stock video (fitness, gaming — needs real b-roll)
+    if niche in ("fitness", "gaming", "sports", "kids", "trading"):
         candidates += fetch_pexels_candidates(niche)
 
     # Reddit — for "everything" pull BOTH timeframes (fresh + all-time classics)
