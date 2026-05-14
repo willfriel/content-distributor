@@ -24,9 +24,26 @@ def _build_service(credentials: dict):
     return build("youtube", "v3", credentials=creds)
 
 
-def upload_video(credentials: dict, video_url: str, title: str, description: str = "", tags: list = None) -> dict:
+CATEGORY_IDS = {
+    "trading":    "22",  # People & Blogs
+    "fitness":    "17",  # Sports
+    "crime":      "22",
+    "sports":     "17",
+    "anatomy":    "27",  # Education
+    "everything": "22",
+    "kids":       "1",   # Film & Animation
+}
+
+
+def upload_video(credentials: dict, video_url: str, title: str, description: str = "",
+                 tags: list = None, niche: str = "everything",
+                 is_short: bool = False, made_for_kids: bool = False) -> dict:
     """Download video from URL and upload it to a YouTube channel."""
     service = _build_service(credentials)
+
+    # Shorts need #Shorts in the title for YouTube to classify them
+    upload_title = (title[:93] + " #Shorts") if is_short else title[:100]
+    category_id  = CATEGORY_IDS.get(niche, "22")
 
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
         tmp_path = tmp.name
@@ -39,22 +56,21 @@ def upload_video(credentials: dict, video_url: str, title: str, description: str
     try:
         body = {
             "snippet": {
-                "title": title[:100],
+                "title":       upload_title,
                 "description": description,
-                "tags": tags or [],
-                "categoryId": "22",  # People & Blogs — override per niche if needed
+                "tags":        (tags or []) + (["Shorts"] if is_short else []),
+                "categoryId":  category_id,
             },
             "status": {
-                "privacyStatus": "public",
-                "selfDeclaredMadeForKids": False,
+                "privacyStatus":          "public",
+                "selfDeclaredMadeForKids": made_for_kids,
             },
         }
-        media = MediaFileUpload(tmp_path, mimetype="video/mp4", resumable=True)
-        request = service.videos().insert(part="snippet,status", body=body, media_body=media)
-
+        media    = MediaFileUpload(tmp_path, mimetype="video/mp4", resumable=True)
+        req      = service.videos().insert(part="snippet,status", body=body, media_body=media)
         response = None
         while response is None:
-            _, response = request.next_chunk()
+            _, response = req.next_chunk()
 
         return {"video_id": response["id"], "url": f"https://youtu.be/{response['id']}"}
     finally:

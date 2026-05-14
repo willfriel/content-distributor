@@ -221,6 +221,82 @@ def generate_and_store(app) -> int | None:
         return record.id
 
 
+# ---------------------------------------------------------------------------
+# Niche video duration limits (seconds) — None = no limit
+# ---------------------------------------------------------------------------
+
+NICHE_MAX_DURATION = {
+    "trading":    60,
+    "fitness":    30,
+    "crime":      90,
+    "sports":     30,
+    "anatomy":    60,
+    "everything": None,
+    "kids_short": 45,
+    "kids_full":  300,   # 5 min YouTube video
+}
+
+
+# ---------------------------------------------------------------------------
+# Teaser + full format helpers
+# ---------------------------------------------------------------------------
+
+def build_teaser(story: dict) -> dict:
+    """
+    Extract scenes 1-2 as a Short teaser.
+    Ends right as the problem is introduced — kids want to see what happens next.
+    """
+    scenes        = story.get("script", {}).get("scenes", story.get("script", []))
+    teaser_scenes = scenes[:2] if isinstance(scenes, list) else []
+    narration     = " ".join(s.get("narration", "") for s in teaser_scenes)
+    character     = story.get("character", "a little friend")
+
+    return {
+        **story,
+        "format":    "short",
+        "scenes":    teaser_scenes,
+        "narration": narration,
+        "caption":   (
+            f"Does {character} find a way? 🌟 Watch the full story on Lumi Tales ✨\n\n"
+            f"#LumiTales #KidsStories #Shorts #Storytime #AnimatedStories"
+        ),
+        "max_duration": NICHE_MAX_DURATION["kids_short"],
+    }
+
+
+def build_full_video(story: dict) -> dict:
+    """
+    Build the full YouTube video script from all 8 scenes.
+    Includes intro card, full narration, and outro.
+    """
+    scenes     = story.get("script", {}).get("scenes", story.get("script", []))
+    if not isinstance(scenes, list):
+        scenes = []
+    narration  = " ".join(s.get("narration", "") for s in scenes)
+    character  = story.get("character", "")
+    title      = story.get("title", "A Lumi Tales Story")
+    moral      = story.get("moral", "")
+
+    description = (
+        f"✨ {title} ✨\n\n"
+        f"Join {character} in today's Lumi Tales adventure!\n\n"
+        f"{moral}\n\n"
+        f"🌙 New stories every day — subscribe so you never miss one!\n\n"
+        f"#LumiTales #KidsStories #BedtimeStories #Storytime #AnimatedStories "
+        f"#KidsYouTube #ChildrensBooks #Cartoon"
+    )
+
+    return {
+        **story,
+        "format":       "full",
+        "scenes":       scenes,
+        "narration":    narration,
+        "caption":      description,
+        "max_duration": NICHE_MAX_DURATION["kids_full"],
+        "made_for_kids": True,
+    }
+
+
 def get_next_story(app) -> dict | None:
     """Get the oldest ready story that hasn't been posted yet."""
     with app.app_context():

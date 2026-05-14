@@ -14,6 +14,7 @@ from apscheduler.jobstores.memory import MemoryJobStore
 
 from pipeline.sources  import get_candidates, NICHE_CONFIG
 from pipeline.captions import generate_captions
+from pipeline.lumi_tales import NICHE_MAX_DURATION
 
 _scheduler: BackgroundScheduler | None = None
 _app = None  # set by init_scheduler; used by job wrappers so app is never pickled
@@ -40,7 +41,7 @@ def _job_crime():      run_pipeline_for_niche("crime",      _app)
 def _job_sports():     run_pipeline_for_niche("sports",     _app)
 def _job_anatomy():    run_pipeline_for_niche("anatomy",    _app)
 def _job_everything(): run_pipeline_for_niche("everything", _app)
-def _job_kids():       run_pipeline_for_niche("kids",       _app)
+def _job_kids():       run_kids_pipeline(_app)
 
 def _job_refresh_tokens():
     from server import refresh_instagram_tokens, refresh_youtube_tokens
@@ -123,7 +124,8 @@ def run_pipeline_for_niche(niche: str, app):
                 db.session.commit(); return
 
             pick       = random.choice(real[:5])
-            video_path = _download_video(pick["url"])
+            max_dur    = NICHE_MAX_DURATION.get(niche)
+            video_path = _download_video(pick["url"], max_duration=max_dur)
             if not video_path:
                 run.status = "failed"; run.note = f"download failed: {pick['url']}"
                 db.session.commit(); return
@@ -196,7 +198,191 @@ def run_pipeline_for_niche(niche: str, app):
             traceback.print_exc()
 
 
-def _download_video(url: str) -> str | None:
+def run_kids_pipeline(app):
+    """
+    Lumi Tales dual-format pipeline:
+    1. Teaser (30-45s Short) → YouTube Shorts + Instagram Reels
+    2. Full video (3-5min)   → YouTube only
+    Both are generated from the same story script.
+    """
+    with app.app_context():
+        from models import db, Niche, SocialAccount, PipelineRun, ContentQueue, LumiStory
+        from server import _run_job, _inject_affiliate_links
+        from pipeline.lumi_tales import (
+            get_next_story, build_teaser, build_full_video,
+            generate_and_store, mark_posted
+        )
+        from integrations.elevenlabs import generate_voiceover, overlay_voiceover
+        from integrations import youtube as yt_integration
+        from pathlib import Path
+
+        print(f"[kids] Starting Lumi Tales pipeline at {datetime.utcnow()}")
+
+        run = PipelineRun(niche="kids", status="running", started_at=datetime.utcnow())
+        db.session.add(run)
+        db.session.commit()
+
+        try:
+            niche_obj = Niche.query.filter_by(name="kids", is_active=True).first()
+            if not niche_obj:
+                run.status = "skipped"; run.note = "kids niche not found"
+                db.session.commit(); return
+
+            yt_accounts = SocialAccount.query.filter_by(
+                niche_id=niche_obj.id, platform="youtube", is_active=True
+            ).all()
+            ig_accounts = SocialAccount.query.filter_by(
+                niche_id=niche_obj.id, platform="instagram", is_active=True
+            ).all()
+
+            if not yt_accounts:
+                run.status = "skipped"; run.note = "no YouTube accounts for kids"
+                db.session.commit(); return
+
+            # Get or generate today's story
+            story = get_next_story(app)
+            if not story:
+                print("[kids] No ready stories — generating one now")
+                generate_and_store(app)
+                story = get_next_story(app)
+            if not story:
+                run.status = "failed"; run.note = "story generation failed"
+                db.session.commit(); return
+
+            story_id   = story["id"]
+            teaser     = build_teaser(story)
+            full_video = build_full_video(story)
+
+            static_dir = Path(app.root_path) / "static" / "videos"
+            static_dir.mkdir(parents=True, exist_ok=True)
+            base_url   = os.environ.get("BASE_URL", "http://localhost:5000").rstrip("/")
+
+            # ----------------------------------------------------------------
+            # Step 1 — TEASER (Short for YouTube + Instagram Reel)
+            # ----------------------------------------------------------------
+            teaser_candidates = get_candidates("kids")
+            teaser_real       = [c for c in teaser_candidates if c.get("url") and
+                                  c.get("source_type") != "ai_pending"]
+            if teaser_real:
+                teaser_vid = _download_video(teaser_real[0]["url"])
+                if teaser_vid:
+                    # Trim to 45s max using moviepy
+                    try:
+                        from moviepy.editor import VideoFileClip
+                        clip = VideoFileClip(teaser_vid)
+                        if clip.duration > 45:
+                            clip = clip.subclip(0, 45)
+                        dest_t = static_dir / f"lumi_teaser_{story_id}.mp4"
+                        clip.write_videofile(str(dest_t), codec="libx264",
+                                             audio_codec="aac", logger=None)
+                        clip.close()
+                        teaser_vid = str(dest_t)
+                    except Exception as e:
+                        print(f"[kids] Teaser trim failed: {e}")
+
+                    # Add voiceover
+                    audio_path, v_id, v_name = generate_voiceover(
+                        teaser["narration"], niche="kids", db_session=db.session
+                    )
+                    if audio_path:
+                        voiced = overlay_voiceover(teaser_vid, audio_path)
+                        if voiced:
+                            import shutil
+                            shutil.move(voiced, teaser_vid)
+
+                    teaser_url = f"{base_url}/static/videos/lumi_teaser_{story_id}.mp4"
+
+                    teaser_item = ContentQueue(
+                        niche_id=niche_obj.id, video_url=teaser_url,
+                        title=story["title"], description=teaser["caption"],
+                        platforms=["youtube", "instagram"], use_opusclip=False,
+                        status="pending", upload_results={}, clipped_urls=[],
+                    )
+                    db.session.add(teaser_item)
+                    db.session.commit()
+
+                    # Upload as Short to YouTube + Reel to Instagram
+                    _run_job(
+                        teaser_item.id,
+                        yt_accounts + ig_accounts,
+                        False,
+                        content_type = "lumi_short",
+                        voice_id     = v_id,
+                        voice_name   = v_name,
+                    )
+                    print(f"[kids] Teaser posted: {story['title']}")
+
+            # ----------------------------------------------------------------
+            # Step 2 — FULL VIDEO (YouTube only, 3-5 min)
+            # ----------------------------------------------------------------
+            full_candidates = get_candidates("kids")
+            full_real       = [c for c in full_candidates if c.get("url") and
+                                c.get("source_type") != "ai_pending"]
+            if full_real:
+                full_vid = _download_video(full_real[0]["url"])
+                if full_vid:
+                    # Pad/loop to fill ~3 min using moviepy
+                    try:
+                        from moviepy.editor import VideoFileClip, concatenate_videoclips
+                        clip = VideoFileClip(full_vid)
+                        target = 180  # 3 min minimum
+                        if clip.duration < target:
+                            loops  = int(target // clip.duration) + 1
+                            clip   = concatenate_videoclips([clip] * loops)
+                            clip   = clip.subclip(0, target)
+                        dest_f = static_dir / f"lumi_full_{story_id}.mp4"
+                        clip.write_videofile(str(dest_f), codec="libx264",
+                                             audio_codec="aac", logger=None)
+                        clip.close()
+                        full_vid = str(dest_f)
+                    except Exception as e:
+                        print(f"[kids] Full video extend failed: {e}")
+
+                    # Full narration voiceover
+                    audio_path, v_id, v_name = generate_voiceover(
+                        full_video["narration"], niche="kids", db_session=db.session
+                    )
+                    if audio_path:
+                        voiced = overlay_voiceover(full_vid, audio_path)
+                        if voiced:
+                            import shutil
+                            shutil.move(voiced, full_vid)
+
+                    full_url = f"{base_url}/static/videos/lumi_full_{story_id}.mp4"
+
+                    full_item = ContentQueue(
+                        niche_id=niche_obj.id, video_url=full_url,
+                        title=story["title"], description=full_video["caption"],
+                        platforms=["youtube"], use_opusclip=False,
+                        status="pending", upload_results={}, clipped_urls=[],
+                    )
+                    db.session.add(full_item)
+                    db.session.commit()
+
+                    _run_job(
+                        full_item.id, yt_accounts, False,
+                        content_type = "lumi_full",
+                        voice_id     = v_id,
+                        voice_name   = v_name,
+                    )
+                    print(f"[kids] Full video posted: {story['title']}")
+
+            mark_posted(story_id, teaser_item.id if teaser_real else None, app)
+
+            run.status       = "completed"
+            run.note         = f"Lumi Tales: {story['title']}"
+            run.completed_at = datetime.utcnow()
+            db.session.commit()
+
+        except Exception as e:
+            import traceback
+            run.status = "failed"; run.note = str(e)[:500]
+            db.session.commit()
+            print(f"[kids] ERROR: {e}")
+            traceback.print_exc()
+
+
+def _download_video(url: str, max_duration: int = None) -> str | None:
     """Download a video to a temp file using yt-dlp. Returns path or None."""
     try:
         import yt_dlp
@@ -210,6 +396,10 @@ def _download_video(url: str) -> str | None:
             "max_filesize":        150 * 1024 * 1024,
             "extractor_args":      {"youtube": {"player_client": ["web"]}},
         }
+        if max_duration:
+            ydl_opts["match_filter"] = yt_dlp.utils.match_filter_func(
+                f"duration <= {max_duration}"
+            )
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         return tmp.name if Path(tmp.name).exists() and Path(tmp.name).stat().st_size > 0 else None
