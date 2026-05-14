@@ -1892,11 +1892,13 @@ def init_db():
 
 def _seed_niches():
     defaults = [
-        ("trading", "Trading"),
-        ("fitness", "Fitness"),
-        ("crime", "Crime / Horror / Mystery"),
-        ("sports", "Sports"),
-        ("anatomy", "Anatomy & Physiology"),
+        ("trading",    "Trading"),
+        ("fitness",    "Fitness"),
+        ("crime",      "Crime / Horror / Mystery"),
+        ("sports",     "Sports"),
+        ("anatomy",    "Anatomy & Physiology"),
+        ("everything", "Everything"),
+        ("kids",       "Kids"),
     ]
     for name, display in defaults:
         if not Niche.query.filter_by(name=name).first():
