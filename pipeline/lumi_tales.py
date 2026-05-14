@@ -226,14 +226,14 @@ def generate_and_store(app) -> int | None:
 # ---------------------------------------------------------------------------
 
 NICHE_MAX_DURATION = {
-    "trading":    60,
-    "fitness":    30,
-    "crime":      90,
-    "sports":     30,
-    "anatomy":    60,
+    "trading":    None,
+    "fitness":    None,
+    "crime":      None,
+    "sports":     None,
+    "anatomy":    None,
     "everything": None,
-    "kids_short": 45,
-    "kids_full":  300,   # 5 min YouTube video
+    "kids_short": None,
+    "kids_full":  None,
 }
 
 
