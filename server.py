@@ -1806,6 +1806,51 @@ def reset_budget():
 
 
 # ---------------------------------------------------------------------------
+# Account channel management
+# ---------------------------------------------------------------------------
+
+@app.route("/api/accounts", methods=["GET"])
+def list_accounts():
+    accounts = SocialAccount.query.filter_by(is_active=True).order_by(SocialAccount.platform).all()
+    return jsonify([a.to_dict() for a in accounts])
+
+
+@app.route("/api/accounts/<int:account_id>/update-channel", methods=["POST"])
+def update_channel(account_id):
+    """
+    Update a YouTube channel's description and/or banner.
+    Body: { "description": "...", "banner_url": "..." }
+    """
+    account = SocialAccount.query.get_or_404(account_id)
+    if account.platform != "youtube":
+        return _error("Only YouTube accounts support channel updates")
+
+    data        = request.get_json(force=True)
+    description = data.get("description")
+    banner_url  = data.get("banner_url")
+    creds       = account.get_credentials()
+    results     = {}
+
+    if description:
+        try:
+            r = yt_integration.update_channel_description(
+                creds, account.account_id, description
+            )
+            results["description"] = r
+        except Exception as e:
+            results["description"] = {"error": str(e)}
+
+    if banner_url:
+        try:
+            r = yt_integration.update_channel_banner(creds, banner_url)
+            results["banner"] = r
+        except Exception as e:
+            results["banner"] = {"error": str(e)}
+
+    return jsonify({"account": account.account_name, "updated": results})
+
+
+# ---------------------------------------------------------------------------
 # Reference account scraper + style learning
 # ---------------------------------------------------------------------------
 
