@@ -130,9 +130,73 @@ def handle_offline(event: dict, app):
 # Clip collection + posting
 # ---------------------------------------------------------------------------
 
-def _clip_download_url(clip: dict) -> str:
-    """Return the clips.twitch.tv URL which yt-dlp handles reliably."""
-    return f"https://clips.twitch.tv/{clip['id']}"
+def _download_twitch_clip(clip_id: str) -> str | None:
+    """
+    Download a Twitch clip directly via GQL API — bypasses yt-dlp which fails
+    on Twitch's HLS-based clip delivery.
+    Returns temp file path or None.
+    """
+    import tempfile
+    from pathlib import Path
+
+    client_id = os.environ.get("TWITCH_CLIENT_ID", "")
+    if not client_id:
+        print("[eventsub] TWITCH_CLIENT_ID not set")
+        return None
+
+    # GQL persisted query for clip access token + video qualities
+    gql_payload = [{
+        "operationName": "VideoAccessToken_Clip",
+        "variables":     {"slug": clip_id},
+        "extensions": {
+            "persistedQuery": {
+                "version":    1,
+                "sha256Hash": "36b89d2507fce29e5ca551df756d27c1cfe079e2609642b4390aa4c35796eb11",
+            }
+        },
+    }]
+
+    try:
+        r = requests.post(
+            "https://gql.twitch.tv/gql",
+            json=gql_payload,
+            headers={"Client-Id": client_id},
+            timeout=15,
+        )
+        r.raise_for_status()
+        clip_data = r.json()[0].get("data", {}).get("clip", {}) or {}
+        qualities  = clip_data.get("videoQualities", [])
+
+        if not qualities:
+            print(f"[eventsub] GQL returned no video qualities for {clip_id}")
+            return None
+
+        # Pick highest quality source URL
+        best      = max(qualities, key=lambda q: int(q.get("quality", "0")))
+        video_url = best.get("sourceURL")
+        if not video_url:
+            return None
+
+        # Download the MP4 directly
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        tmp.close()
+        with requests.get(video_url, stream=True, timeout=120) as resp:
+            resp.raise_for_status()
+            with open(tmp.name, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=65536):
+                    f.write(chunk)
+
+        size = Path(tmp.name).stat().st_size
+        if size == 0:
+            print(f"[eventsub] Downloaded 0 bytes for {clip_id}")
+            return None
+
+        print(f"[eventsub] Downloaded {clip_id}: {size / 1024 / 1024:.1f} MB")
+        return tmp.name
+
+    except Exception as e:
+        print(f"[eventsub] GQL download failed for {clip_id}: {e}")
+        return None
 
 
 def _collect_and_post(login: str, started_at: str | None, app, all_time_only: bool = False):
@@ -189,7 +253,7 @@ def _collect_and_post(login: str, started_at: str | None, app, all_time_only: bo
         print(f"[eventsub] Posting {len(selected)} clip(s) for {login}")
         for clip in selected:
             print(f"[eventsub]   → '{clip['title']}' ({clip['view_count']} views)")
-            _post_clip(_clip_download_url(clip), clip.get("title", f"{login} clip"), login, app)
+            _post_clip(clip["id"], clip.get("title", f"{login} clip"), login, app)
 
     except Exception as e:
         print(f"[eventsub] Clip collection failed for {login}: {e}")
@@ -271,18 +335,17 @@ def _format_vertical(input_path: str, hook: str, cta: str) -> tuple[str, str]:
         return input_path, "original"
 
 
-def _post_clip(clip_url: str, clip_title: str, streamer: str, app):
-    """Download clip, format to vertical 9:16, and post to all twitch niche accounts."""
+def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
+    """Download clip via GQL, format to vertical 9:16, post to all twitch niche accounts."""
     from pathlib import Path
-    from pipeline.scheduler import _download_video
-    from pipeline.captions  import generate_captions
+    from pipeline.captions import generate_captions
 
     with app.app_context():
         from models import db, Niche, SocialAccount, PipelineRun, ContentQueue
         from server  import _run_job
         from datetime import datetime
 
-        print(f"[eventsub] Posting clip from {streamer}: {clip_url}")
+        print(f"[eventsub] Posting clip from {streamer}: {clip_id}")
 
         niche_obj = Niche.query.filter_by(name="twitch", is_active=True).first()
         if not niche_obj:
@@ -300,9 +363,9 @@ def _post_clip(clip_url: str, clip_title: str, streamer: str, app):
         db.session.commit()
 
         try:
-            video_path = _download_video(clip_url, max_duration=60)
+            video_path = _download_twitch_clip(clip_id)
             if not video_path:
-                run.status = "failed"; run.note = f"eventsub download failed: {clip_url}"
+                run.status = "failed"; run.note = f"eventsub download failed: {clip_id}"
                 db.session.commit(); return
 
             static_dir = Path(app.root_path) / "static" / "videos"
