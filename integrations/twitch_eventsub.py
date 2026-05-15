@@ -309,14 +309,22 @@ def _transcribe_clip(video_path: str) -> str | None:
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
-        with open(video_path, "rb") as f:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                response_format="srt",
-            )
-        print(f"[eventsub] Transcribed {video_path} ({len(transcript)} chars)")
-        return transcript
+        for attempt in range(3):
+            try:
+                with open(video_path, "rb") as f:
+                    transcript = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=f,
+                        response_format="srt",
+                    )
+                print(f"[eventsub] Transcribed {video_path} ({len(transcript)} chars)")
+                return transcript
+            except Exception as e:
+                if "rate_limit" in str(e).lower() and attempt < 2:
+                    print(f"[eventsub] Whisper rate limit — retrying in 25s")
+                    time.sleep(25)
+                else:
+                    raise
     except Exception as e:
         print(f"[eventsub] Whisper failed: {e}")
         return None
@@ -349,23 +357,8 @@ def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = Non
         f":x=(w-text_w)/2:y=h-220:shadowcolor=black:shadowx=3:shadowy=3"
     )
 
-    # Write SRT to temp file if provided
-    srt_path = None
-    if srt:
-        srt_path = input_path.replace(".mp4", ".srt")
-        with open(srt_path, "w", encoding="utf-8") as f:
-            f.write(srt)
-
-    # Caption filter — bold white text, black outline, sits inside the clip area
-    cap_style = (
-        "FontName=Arial,Bold=1,FontSize=16,"
-        "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
-        "BorderStyle=1,Outline=2,Shadow=0,"
-        "MarginV=15,Alignment=2"
-    )
-    sub_filter = f"subtitles='{srt_path}':force_style='{cap_style}'" if srt_path else None
-
     try:
+        # Pass 1: vertical layout with hook + CTA
         if bg_style == "blur":
             fc = (
                 f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
@@ -373,38 +366,56 @@ def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = Non
                 f"[0:v]scale=1080:-2[fg];"
                 f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
                 f"[comp]{dt_hook}[h];"
-                f"[h]{dt_cta}[base]"
+                f"[h]{dt_cta}[out]"
             )
-            if sub_filter:
-                fc += f";[base]{sub_filter}[out]"
-                map_out = "[out]"
-            else:
-                fc = fc.replace("[base]", "[out]")
-                map_out = "[out]"
-            cmd = ["ffmpeg", "-i", input_path, "-filter_complex", fc,
-                   "-map", map_out, "-map", "0:a?",
-                   "-c:v", "libx264", "-c:a", "aac", "-shortest", "-y", out_path]
+            cmd1 = ["ffmpeg", "-i", input_path, "-filter_complex", fc,
+                    "-map", "[out]", "-map", "0:a?",
+                    "-c:v", "libx264", "-c:a", "aac", "-shortest", "-y", out_path]
         else:
             vf = f"scale=1080:-2,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,{dt_hook},{dt_cta}"
-            if sub_filter:
-                vf += f",{sub_filter}"
-            cmd = ["ffmpeg", "-i", input_path, "-vf", vf,
-                   "-c:v", "libx264", "-c:a", "aac", "-y", out_path]
+            cmd1 = ["ffmpeg", "-i", input_path, "-vf", vf,
+                    "-c:v", "libx264", "-c:a", "aac", "-y", out_path]
 
-        subprocess.run(cmd, check=True, capture_output=True, timeout=180)
-        print(f"[eventsub] Formatted vertical ({bg_style} bg, captions={'yes' if srt_path else 'no'}): {out_path}")
-        return out_path, bg_style
+        subprocess.run(cmd1, check=True, capture_output=True, timeout=180)
+        print(f"[eventsub] Formatted vertical ({bg_style} bg): {out_path}")
 
     except Exception as e:
-        print(f"[eventsub] ffmpeg format failed ({e}), using original")
+        print(f"[eventsub] ffmpeg pass 1 failed ({e}), using original")
         return input_path, "original"
-    finally:
-        if srt_path:
-            try:
+
+    # Pass 2: burn subtitles (separate pass avoids filter-chain comma escaping issues)
+    if srt:
+        srt_path = out_path.replace(".mp4", ".srt")
+        cap_path  = out_path.replace(".mp4", "_cap.mp4")
+        try:
+            with open(srt_path, "w", encoding="utf-8") as f:
+                f.write(srt)
+            # ASS-style force_style — use | as separator trick via subtitles filter
+            cmd2 = [
+                "ffmpeg", "-i", out_path,
+                "-vf", f"subtitles={srt_path}:force_style='Bold=1,FontSize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,MarginV=15,Alignment=2'",
+                "-c:v", "libx264", "-c:a", "aac", "-y", cap_path,
+            ]
+            result = subprocess.run(cmd2, capture_output=True, timeout=180)
+            if result.returncode == 0:
                 import os as _os
-                _os.unlink(srt_path)
-            except Exception:
-                pass
+                _os.replace(cap_path, out_path)
+                print(f"[eventsub] Captions burned in: {out_path}")
+            else:
+                err = result.stderr.decode("utf-8", errors="ignore")[-300:]
+                print(f"[eventsub] Caption burn failed: {err}")
+        except Exception as e:
+            print(f"[eventsub] ffmpeg pass 2 failed ({e}), posting without captions")
+        finally:
+            for p in [srt_path, cap_path]:
+                try:
+                    import os as _os
+                    if _os.path.exists(p):
+                        _os.unlink(p)
+                except Exception:
+                    pass
+
+    return out_path, bg_style
 
 
 def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
