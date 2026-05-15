@@ -180,8 +180,10 @@ def _download_twitch_clip(clip_id: str) -> str | None:
                 print(f"[eventsub] No qualities for {clip_id} ({client_id[:8]}...)")
                 continue
 
-            best      = max(qualities, key=lambda q: int(q.get("quality", "0")))
-            video_url = best.get("sourceURL")
+            # Cap at 720p to keep file size manageable on 512MB Render instance
+            target = next((q for q in sorted(qualities, key=lambda q: int(q.get("quality","0")), reverse=True)
+                           if int(q.get("quality", "0")) <= 720), qualities[0])
+            video_url = target.get("sourceURL")
             if not video_url:
                 continue
 
@@ -268,7 +270,9 @@ def _collect_and_post(login: str, started_at: str | None, app, all_time_only: bo
             return
 
         print(f"[eventsub] Posting {len(selected)} clip(s) for {login}")
-        for clip in selected:
+        for i, clip in enumerate(selected):
+            if i > 0:
+                time.sleep(30)  # sequential — avoid simultaneous ffmpeg processes
             print(f"[eventsub]   → '{clip['title']}' ({clip['view_count']} views)")
             _post_clip(clip["id"], clip.get("title", f"{login} clip"), login, app)
 
@@ -370,11 +374,13 @@ def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = Non
             )
             cmd1 = ["ffmpeg", "-i", input_path, "-filter_complex", fc,
                     "-map", "[out]", "-map", "0:a?",
-                    "-c:v", "libx264", "-c:a", "aac", "-shortest", "-y", out_path]
+                    "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
+                    "-c:a", "aac", "-shortest", "-y", out_path]
         else:
             vf = f"scale=1080:-2,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,{dt_hook},{dt_cta}"
             cmd1 = ["ffmpeg", "-i", input_path, "-vf", vf,
-                    "-c:v", "libx264", "-c:a", "aac", "-y", out_path]
+                    "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
+                    "-c:a", "aac", "-y", out_path]
 
         subprocess.run(cmd1, check=True, capture_output=True, timeout=180)
         print(f"[eventsub] Formatted vertical ({bg_style} bg): {out_path}")
@@ -394,7 +400,8 @@ def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = Non
             cmd2 = [
                 "ffmpeg", "-i", out_path,
                 "-vf", f"subtitles={srt_path}:force_style='Bold=1,FontSize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,MarginV=15,Alignment=2'",
-                "-c:v", "libx264", "-c:a", "aac", "-y", cap_path,
+                "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
+                "-c:a", "aac", "-y", cap_path,
             ]
             result = subprocess.run(cmd2, capture_output=True, timeout=180)
             if result.returncode == 0:
