@@ -43,6 +43,9 @@ class Config:
     # Pexels (free stock video)
     PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY")
 
+    # Google Cloud TTS (free longform narration — 1M chars/month free)
+    GOOGLE_TTS_API_KEY = os.environ.get("GOOGLE_TTS_API_KEY")
+
     # Telegram (optional notifications)
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")

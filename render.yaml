@@ -45,6 +45,8 @@ services:
         sync: false
       - key: PEXELS_API_KEY
         sync: false
+      - key: GOOGLE_TTS_API_KEY
+        sync: false
 
 databases:
   - name: content-distributor-db

@@ -189,7 +189,8 @@ def assemble_video(script: dict, niche: str, app) -> str | None:
     """
     from pipeline.sources import get_candidates
     from pipeline.scheduler import _download_video
-    from integrations.elevenlabs import generate_voiceover, overlay_voiceover
+    from integrations.google_tts import generate_narration
+    from integrations.elevenlabs import overlay_voiceover
 
     chapters   = script.get("chapters", [])
     full_narr  = " ".join(c.get("narration", "") for c in chapters)
@@ -229,8 +230,8 @@ def assemble_video(script: dict, niche: str, app) -> str | None:
         # Stitch all chapter clips together
         final_clip = concatenate_videoclips([c for c, _ in clip_paths], method="compose")
 
-        # Generate full narration and overlay
-        audio_path, _, _ = generate_voiceover(full_narr, niche=niche)
+        # Generate full narration with Google TTS (free, 1M chars/month)
+        audio_path = generate_narration(full_narr, niche=niche)
         if audio_path:
             from moviepy.editor import AudioFileClip
             narr_audio = AudioFileClip(audio_path)
