@@ -21,7 +21,7 @@ TWITCH_NICHE_STREAMERS = [
     "kaicenat",
     "adinross",
     "xqc",
-    "marlonwebb",
+    "marlon",
     "adapt",
     "n3on",
     "stableronaldo",
