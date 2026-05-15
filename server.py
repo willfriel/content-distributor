@@ -1930,6 +1930,21 @@ def get_style_guides():
     return jsonify([g.to_dict() for g in guides])
 
 
+@app.route("/api/style-guides/<niche>", methods=["POST"])
+def push_style_guide(niche):
+    """Push style guide updates directly from MCP scroll sessions."""
+    data  = request.get_json(force=True)
+    guide = StyleGuide.query.filter_by(niche=niche).first()
+    if guide:
+        guide.guidelines     = data
+        guide.generated_at   = datetime.utcnow()
+    else:
+        guide = StyleGuide(niche=niche, guidelines=data)
+        db.session.add(guide)
+    db.session.commit()
+    return jsonify(guide.to_dict())
+
+
 # ---------------------------------------------------------------------------
 # Lumi Tales story management
 # ---------------------------------------------------------------------------
