@@ -226,12 +226,12 @@ def _format_vertical(input_path: str, hook: str, cta: str) -> tuple[str, str]:
     cta_esc  = esc(cta[:90])
 
     dt_hook = (
-        f"drawtext=text='{hook_esc}':fontsize=54:fontcolor=white"
-        f":x=(w-text_w)/2:y=90:shadowcolor=black:shadowx=3:shadowy=3"
+        f"drawtext=text='{hook_esc}':fontsize=90:fontcolor=white"
+        f":x=(w-text_w)/2:y=250:shadowcolor=black:shadowx=4:shadowy=4"
     )
     dt_cta = (
-        f"drawtext=text='{cta_esc}':fontsize=36:fontcolor=white"
-        f":x=(w-text_w)/2:y=h-100:shadowcolor=black:shadowx=2:shadowy=2"
+        f"drawtext=text='{cta_esc}':fontsize=55:fontcolor=white"
+        f":x=(w-text_w)/2:y=h-220:shadowcolor=black:shadowx=3:shadowy=3"
     )
 
     try:
