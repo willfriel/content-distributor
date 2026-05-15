@@ -1820,7 +1820,7 @@ def reset_budget():
 # ---------------------------------------------------------------------------
 
 @app.route("/api/accounts", methods=["GET"])
-def list_accounts():
+def list_all_accounts():
     accounts = SocialAccount.query.filter_by(is_active=True).order_by(SocialAccount.platform).all()
     return jsonify([a.to_dict() for a in accounts])
 
