@@ -18,6 +18,9 @@ _EVENTSUB_URL = f"{_BASE}/eventsub/subscriptions"
 # streamer_login -> ISO stream start time (set on stream.online, cleared on post)
 _stream_start_times: dict[str, str] = {}
 
+# Only one video processing job at a time — Render Starter plan has 512MB RAM
+_process_lock = threading.Semaphore(1)
+
 
 # ---------------------------------------------------------------------------
 # Signature verification
@@ -464,19 +467,23 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
             import shutil
             shutil.move(video_path, str(raw_dest))
 
-            # Transcribe audio for captions
-            srt = _transcribe_clip(str(raw_dest))
+            print(f"[eventsub] Waiting for process slot...")
+            with _process_lock:
+                print(f"[eventsub] Processing slot acquired for {clip_id}")
 
-            # Generate hook and format to 9:16 vertical with burned-in captions
-            hook         = _generate_hook(streamer, clip_title)
-            cta          = f"To keep watching {streamer} clips follow for more!"
-            fmt_path, bg = _format_vertical(str(raw_dest), hook, cta, srt=srt)
+                # Transcribe audio for captions
+                srt = _transcribe_clip(str(raw_dest))
 
-            # Move formatted file to final destination
-            dest = static_dir / f"pipeline_twitch_event_{run.id}.mp4"
-            shutil.move(fmt_path, str(dest))
-            if raw_dest.exists():
-                raw_dest.unlink(missing_ok=True)
+                # Generate hook and format to 9:16 vertical with burned-in captions
+                hook         = _generate_hook(streamer, clip_title)
+                cta          = f"To keep watching {streamer} clips follow for more!"
+                fmt_path, bg = _format_vertical(str(raw_dest), hook, cta, srt=srt)
+
+                # Move formatted file to final destination
+                dest = static_dir / f"pipeline_twitch_event_{run.id}.mp4"
+                shutil.move(fmt_path, str(dest))
+                if raw_dest.exists():
+                    raw_dest.unlink(missing_ok=True)
 
             base_url  = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
             video_url = f"{base_url}/static/videos/{dest.name}"
