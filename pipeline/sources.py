@@ -22,7 +22,7 @@ TWITCH_NICHE_STREAMERS = [
     "adinross",
     "xqc",
     "marlonwebb",
-    "adapttheking",
+    "adapt",
     "n3on",
     "stableronaldo",
     "jynxzi",

@@ -2182,7 +2182,8 @@ def debug_clip_fetch(streamer):
             return jsonify({"error": f"user not found: {streamer}"}), 404
 
         r = req.get("https://api.twitch.tv/helix/clips",
-                    params={"broadcaster_id": broadcaster_id, "first": 5},
+                    params={"broadcaster_id": broadcaster_id, "first": 5,
+                            "started_at": "2016-01-01T00:00:00Z"},
                     headers=headers, timeout=15)
         return jsonify({
             "broadcaster_id": broadcaster_id,
