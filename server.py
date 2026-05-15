@@ -2181,15 +2181,24 @@ def debug_clip_fetch(streamer):
         if not broadcaster_id:
             return jsonify({"error": f"user not found: {streamer}"}), 404
 
-        r = req.get("https://api.twitch.tv/helix/clips",
-                    params={"broadcaster_id": broadcaster_id, "first": 5,
-                            "started_at": "2016-01-01T00:00:00Z"},
-                    headers=headers, timeout=15)
+        from datetime import datetime, timezone, timedelta
+        since_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        r24 = req.get("https://api.twitch.tv/helix/clips",
+                      params={"broadcaster_id": broadcaster_id, "first": 5, "started_at": since_24h},
+                      headers=headers, timeout=15)
+        rall = req.get("https://api.twitch.tv/helix/clips",
+                       params={"broadcaster_id": broadcaster_id, "first": 5,
+                               "started_at": "2016-01-01T00:00:00Z"},
+                       headers=headers, timeout=15)
+        rnone = req.get("https://api.twitch.tv/helix/clips",
+                        params={"broadcaster_id": broadcaster_id, "first": 5},
+                        headers=headers, timeout=15)
         return jsonify({
-            "broadcaster_id": broadcaster_id,
-            "status_code":    r.status_code,
-            "clips":          r.json().get("data", []),
-            "raw":            r.text[:500],
+            "broadcaster_id":  broadcaster_id,
+            "clips_24h":       r24.json().get("data", []),
+            "clips_all_time":  rall.json().get("data", []),
+            "clips_no_filter": rnone.json().get("data", []),
         })
     except Exception:
         return jsonify({"error": traceback.format_exc()}), 500

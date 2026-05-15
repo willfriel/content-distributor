@@ -149,7 +149,7 @@ def _collect_and_post(login: str, started_at: str | None, app):
 
     try:
         # --- Last 24 hours ---
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
         r = requests.get(f"{_BASE}/clips",
                          params={"broadcaster_id": broadcaster_id, "first": 20, "started_at": since},
                          headers=headers, timeout=15)
