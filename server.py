@@ -2148,6 +2148,23 @@ def delete_link(link_id):
 
 
 # ---------------------------------------------------------------------------
+# Twitch clip manual trigger (admin)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/eventsub/post-clip/<streamer>", methods=["POST"])
+def manual_post_clip(streamer):
+    """Fetch the all-time top clip for a streamer and post it to the twitch niche."""
+    import threading
+    from integrations.twitch_eventsub import _collect_and_post
+
+    def run():
+        _collect_and_post(streamer.lower(), None, app)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"status": "started", "streamer": streamer}), 202
+
+
+# ---------------------------------------------------------------------------
 # Twitch EventSub webhook
 # ---------------------------------------------------------------------------
 
