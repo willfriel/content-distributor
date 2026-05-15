@@ -1,13 +1,45 @@
 """
 Instagram public profile scraper using instaloader.
 Scrapes captions, hashtags, and engagement metrics from reference accounts.
-No login required for public profiles (rate-limited to ~30 posts/account).
+Uses a logged-in session to avoid anonymous rate limits on cloud IPs.
 """
 
+import os
 import re
 import time
 import itertools
 from datetime import datetime
+
+
+def _get_loader():
+    """Build an instaloader instance, logged in if credentials are available."""
+    try:
+        import instaloader
+    except ImportError:
+        print("[scraper] instaloader not installed")
+        return None
+
+    L = instaloader.Instaloader(
+        download_pictures         = False,
+        download_videos           = False,
+        download_video_thumbnails = False,
+        download_geotags          = False,
+        download_comments         = False,
+        save_metadata             = False,
+        compress_json             = False,
+        quiet                     = True,
+    )
+
+    username = os.environ.get("INSTAGRAM_SCRAPER_USER")
+    password = os.environ.get("INSTAGRAM_SCRAPER_PASS")
+    if username and password:
+        try:
+            L.login(username, password)
+            print(f"[scraper] Logged in as @{username}")
+        except Exception as e:
+            print(f"[scraper] Login failed, falling back to anonymous: {e}")
+
+    return L
 
 
 def scrape_account(handle: str, max_posts: int = 30) -> list[dict]:
@@ -15,23 +47,11 @@ def scrape_account(handle: str, max_posts: int = 30) -> list[dict]:
     Scrape recent posts from a public Instagram account.
     Returns list of post dicts with caption, likes, comments, views, etc.
     """
-    try:
-        import instaloader
-    except ImportError:
-        print("[scraper] instaloader not installed")
+    L = _get_loader()
+    if not L:
         return []
 
     handle = handle.lstrip("@")
-    L      = instaloader.Instaloader(
-        download_pictures   = False,
-        download_videos     = False,
-        download_video_thumbnails = False,
-        download_geotags    = False,
-        download_comments   = False,
-        save_metadata       = False,
-        compress_json       = False,
-        quiet               = True,
-    )
 
     posts = []
     try:
