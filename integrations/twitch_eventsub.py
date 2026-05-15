@@ -388,7 +388,8 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
             static_dir = Path(app.root_path) / "static" / "videos"
             static_dir.mkdir(parents=True, exist_ok=True)
             raw_dest = static_dir / f"pipeline_twitch_event_{run.id}_raw.mp4"
-            Path(video_path).rename(raw_dest)
+            import shutil
+            shutil.move(video_path, str(raw_dest))
 
             # Generate hook and format to 9:16 vertical
             hook         = _generate_hook(streamer, clip_title)
@@ -397,7 +398,7 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
 
             # Move formatted file to final destination
             dest = static_dir / f"pipeline_twitch_event_{run.id}.mp4"
-            Path(fmt_path).rename(dest)
+            shutil.move(fmt_path, str(dest))
             if raw_dest.exists():
                 raw_dest.unlink(missing_ok=True)
 
