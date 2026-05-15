@@ -131,7 +131,12 @@ def handle_offline(event: dict, app):
 # ---------------------------------------------------------------------------
 
 def _collect_and_post(login: str, started_at: str | None, app):
-    """Fetch the top clip from a just-ended stream and post it to all twitch accounts."""
+    """
+    Fetch up to 3 clips for a streamer:
+      1. Top clips from the last 24 hours (by view count)
+      2. Pad with all-time top clips if fewer than 3 were found
+    """
+    from datetime import timedelta
     print(f"[eventsub] Fetching clips for {login}...")
 
     headers = _twitch_headers()
@@ -143,31 +148,121 @@ def _collect_and_post(login: str, started_at: str | None, app):
         return
 
     try:
-        params = {"broadcaster_id": broadcaster_id, "first": 10}
-        if started_at:
-            params["started_at"] = started_at
-
-        r = requests.get(f"{_BASE}/clips", params=params, headers=headers, timeout=15)
+        # --- Last 24 hours ---
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        r = requests.get(f"{_BASE}/clips",
+                         params={"broadcaster_id": broadcaster_id, "first": 20, "started_at": since},
+                         headers=headers, timeout=15)
         r.raise_for_status()
-        clips = r.json().get("data", [])
+        recent = sorted(r.json().get("data", []), key=lambda c: c.get("view_count", 0), reverse=True)
+        selected = recent[:3]
 
-        if not clips:
+        # --- Pad with all-time if fewer than 3 ---
+        if len(selected) < 3:
+            seen = {c["id"] for c in selected}
+            r2 = requests.get(f"{_BASE}/clips",
+                              params={"broadcaster_id": broadcaster_id, "first": 20},
+                              headers=headers, timeout=15)
+            r2.raise_for_status()
+            all_time = sorted(r2.json().get("data", []), key=lambda c: c.get("view_count", 0), reverse=True)
+            for clip in all_time:
+                if clip["id"] not in seen:
+                    selected.append(clip)
+                    seen.add(clip["id"])
+                    if len(selected) == 3:
+                        break
+
+        if not selected:
             print(f"[eventsub] No clips found for {login}")
             return
 
-        clips.sort(key=lambda c: c.get("view_count", 0), reverse=True)
-        best = clips[0]
-        print(f"[eventsub] Best clip: '{best['title']}' ({best['view_count']} views)")
-
-        _post_clip(best["url"], best.get("title", f"{login} clip"), login, app)
+        print(f"[eventsub] Posting {len(selected)} clip(s) for {login}")
+        for clip in selected:
+            print(f"[eventsub]   → '{clip['title']}' ({clip['view_count']} views)")
+            _post_clip(clip["url"], clip.get("title", f"{login} clip"), login, app)
 
     except Exception as e:
         print(f"[eventsub] Clip collection failed for {login}: {e}")
 
 
-def _post_clip(clip_url: str, clip_title: str, streamer: str, app):
-    """Download clip and post to all twitch niche accounts immediately."""
+def _generate_hook(streamer: str, clip_title: str) -> str:
+    """Generate a short punchy 5-8 word hook for the video overlay text."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return clip_title[:60]
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=60,
+            messages=[{"role": "user", "content":
+                f"Write ONE punchy 5-8 word hook for a Twitch clip video overlay. "
+                f"Streamer: {streamer}. Clip: {clip_title}. "
+                f"Capitalize each word. 1 emoji max. No quotes. No hashtags. No explanation."
+            }],
+        )
+        return msg.content[0].text.strip()[:70]
+    except Exception:
+        return clip_title[:60]
+
+
+def _format_vertical(input_path: str, hook: str, cta: str) -> tuple[str, str]:
+    """
+    Convert a horizontal clip to 9:16 vertical (1080x1920) with text overlays.
+    Randomly picks black or blur background — tagged for A/B learning.
+    Returns (output_path, bg_style).
+    """
+    import subprocess
     import random
+
+    bg_style = random.choice(["black", "blur"])
+    out_path = input_path.replace(".mp4", "_v.mp4")
+
+    def esc(t: str) -> str:
+        return t.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\%")
+
+    hook_esc = esc(hook[:70])
+    cta_esc  = esc(cta[:90])
+
+    dt_hook = (
+        f"drawtext=text='{hook_esc}':fontsize=54:fontcolor=white"
+        f":x=(w-text_w)/2:y=90:shadowcolor=black:shadowx=3:shadowy=3"
+    )
+    dt_cta = (
+        f"drawtext=text='{cta_esc}':fontsize=36:fontcolor=white"
+        f":x=(w-text_w)/2:y=h-100:shadowcolor=black:shadowx=2:shadowy=2"
+    )
+
+    try:
+        if bg_style == "blur":
+            fc = (
+                f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+                f"crop=1080:1920,boxblur=25:25[bg];"
+                f"[0:v]scale=1080:-2[fg];"
+                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
+                f"[comp]{dt_hook}[h];"
+                f"[h]{dt_cta}[out]"
+            )
+            cmd = ["ffmpeg", "-i", input_path, "-filter_complex", fc,
+                   "-map", "[out]", "-map", "0:a?",
+                   "-c:v", "libx264", "-c:a", "aac", "-shortest", "-y", out_path]
+        else:
+            vf = f"scale=1080:-2,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,{dt_hook},{dt_cta}"
+            cmd = ["ffmpeg", "-i", input_path, "-vf", vf,
+                   "-c:v", "libx264", "-c:a", "aac", "-y", out_path]
+
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        print(f"[eventsub] Formatted vertical ({bg_style} bg): {out_path}")
+        return out_path, bg_style
+
+    except Exception as e:
+        print(f"[eventsub] ffmpeg format failed ({e}), using original")
+        return input_path, "original"
+
+
+def _post_clip(clip_url: str, clip_title: str, streamer: str, app):
+    """Download clip, format to vertical 9:16, and post to all twitch niche accounts."""
     from pathlib import Path
     from pipeline.scheduler import _download_video
     from pipeline.captions  import generate_captions
@@ -202,8 +297,19 @@ def _post_clip(clip_url: str, clip_title: str, streamer: str, app):
 
             static_dir = Path(app.root_path) / "static" / "videos"
             static_dir.mkdir(parents=True, exist_ok=True)
+            raw_dest = static_dir / f"pipeline_twitch_event_{run.id}_raw.mp4"
+            Path(video_path).rename(raw_dest)
+
+            # Generate hook and format to 9:16 vertical
+            hook         = _generate_hook(streamer, clip_title)
+            cta          = f"To keep watching {streamer} clips follow for more!"
+            fmt_path, bg = _format_vertical(str(raw_dest), hook, cta)
+
+            # Move formatted file to final destination
             dest = static_dir / f"pipeline_twitch_event_{run.id}.mp4"
-            Path(video_path).rename(dest)
+            Path(fmt_path).rename(dest)
+            if raw_dest.exists():
+                raw_dest.unlink(missing_ok=True)
 
             base_url  = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
             video_url = f"{base_url}/static/videos/{dest.name}"
@@ -219,7 +325,7 @@ def _post_clip(clip_url: str, clip_title: str, streamer: str, app):
                 platforms      = list({a.platform for a in accounts}),
                 use_opusclip   = False,
                 status         = "pending",
-                upload_results = {},
+                upload_results = {"bg_style": bg, "hook": hook},
                 clipped_urls   = [],
             )
             db.session.add(item)
@@ -234,7 +340,7 @@ def _post_clip(clip_url: str, clip_title: str, streamer: str, app):
 
             run.status = "completed"
             db.session.commit()
-            print(f"[eventsub] ✅ Posted {streamer} clip to {len(accounts)} accounts")
+            print(f"[eventsub] ✅ Posted {streamer} clip ({bg} bg) to {len(accounts)} accounts")
 
         except Exception as e:
             run.status = "failed"; run.note = str(e)
