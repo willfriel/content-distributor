@@ -162,8 +162,7 @@ def _collect_and_post(login: str, started_at: str | None, app):
         if len(selected) < 3:
             seen = {c["id"] for c in selected}
             r2 = requests.get(f"{_BASE}/clips",
-                              params={"broadcaster_id": broadcaster_id, "first": 20,
-                                      "started_at": "2016-01-01T00:00:00Z"},
+                              params={"broadcaster_id": broadcaster_id, "first": 20},
                               headers=headers, timeout=15)
             r2.raise_for_status()
             all_time = sorted(r2.json().get("data", []), key=lambda c: c.get("view_count", 0), reverse=True)
