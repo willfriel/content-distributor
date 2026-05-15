@@ -49,6 +49,14 @@ TEMPLATES = {
         ["Story time! 🎉 Can you guess what happens next?", "The most magical story you'll hear today 🧚"],
         ["Even adults love this one 😂❤️", "Imagination level: unlimited 🚀"],
     ],
+    "twitch": [
+        ["Bro really did this on stream 💀🔴", "The chat had NO idea what was about to happen 👀"],
+        ["This clip broke the internet for a reason 😭🔴", "Nobody does it like him 💀 stream clip of the day"],
+        ["Streamer goes viral for this 🤯 #twitch", "The moment that made everyone clip it 🔴💀"],
+        ["POV: you're watching live when this happens 😭", "This is why Twitch is undefeated 🔴🏆"],
+        ["Chat was NOT ready 💀💀💀", "The clip everyone's talking about today 🔴👀"],
+        ["You can't make this stuff up 😭🔴", "Streamer of the year behavior 🏆💀"],
+    ],
 }
 
 HASHTAGS = {
@@ -59,6 +67,7 @@ HASHTAGS = {
     "gaming":   "#gaming #gamer #twitch #fyp #foryou #viral #gameplay #esports #gamingmoments #streamer",
     "everything": "#viral #trending #funny #relatable #foryou #fyp #memes #entertainment #satisfying",
     "kids":     "#kids #storytime #children #cartoon #family #education #fun #imagination #fyp",
+    "twitch":   "#twitch #twitchclips #streamer #viral #funny #clip #fyp #foryou #livestream #gaming",
 }
 
 

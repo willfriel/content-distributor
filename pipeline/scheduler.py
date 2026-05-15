@@ -29,6 +29,7 @@ NICHE_POST_TIMES = {
     "gaming":     (15, 0),
     "everything": (19, 0),
     "kids":       (21, 0),
+    "twitch":     (20, 0),  # 8 PM UTC / 4 PM EST
 }
 
 
@@ -43,6 +44,7 @@ def _job_sports():     run_pipeline_for_niche("sports",     _app)
 def _job_gaming():     run_pipeline_for_niche("gaming",     _app)
 def _job_everything(): run_pipeline_for_niche("everything", _app)
 def _job_kids():       run_kids_pipeline(_app)
+def _job_twitch():     run_pipeline_for_niche("twitch",     _app)
 
 def _job_refresh_tokens():
     from server import refresh_instagram_tokens, refresh_youtube_tokens
@@ -76,6 +78,7 @@ _JOB_FUNCS = {
     "gaming":     _job_gaming,
     "everything": _job_everything,
     "kids":       _job_kids,
+    "twitch":     _job_twitch,
 }
 
 

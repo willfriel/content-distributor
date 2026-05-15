@@ -14,7 +14,34 @@ import feedparser
 # Niche configuration
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Twitch niche streamer list — add new streamers here anytime
+# ---------------------------------------------------------------------------
+TWITCH_NICHE_STREAMERS = [
+    "kaicenat",
+    "adinross",
+    "xqc",
+    "marlonwebb",
+    "adapttheking",
+    "n3on",
+    "stableronaldo",
+    "jynxzi",
+    "lacy",
+    "ishowspeed",
+    "jidionpremium",
+    "lacyoffline_",
+    "joe_bartolozzi",
+]
+
 NICHE_CONFIG = {
+    "twitch": {
+        "youtube_queries": [],
+        "subreddits":      [],
+        "rss_feeds":       [],
+        "keywords":        ["twitch", "clip", "streamer", "viral", "funny", "moment"],
+        "twitch_streamers": TWITCH_NICHE_STREAMERS,
+        "twitch_games":     [],
+    },
     "trading": {
         "youtube_queries": ["trading tips shorts", "crypto analysis 2025", "stock market explained short"],
         "subreddits":      ["wallstreetbets", "investing", "CryptoCurrency"],
@@ -362,7 +389,7 @@ def get_candidates(niche: str, youtube_api_key: str = None) -> list[dict]:
     candidates += fetch_twitch_candidates(niche)
 
     # Pexels stock video (fitness, gaming — needs real b-roll)
-    if niche in ("fitness", "gaming", "sports", "kids", "trading"):
+    if niche in ("fitness", "gaming", "sports", "kids", "trading", "twitch"):
         candidates += fetch_pexels_candidates(niche)
 
     # Reddit — for "everything" pull BOTH timeframes (fresh + all-time classics)

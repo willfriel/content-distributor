@@ -2168,6 +2168,7 @@ def _seed_niches():
         ("gaming",     "Gaming"),
         ("everything", "Everything"),
         ("kids",       "Kids"),
+        ("twitch",     "Twitch Clips"),
     ]
     for name, display in defaults:
         if not Niche.query.filter_by(name=name).first():
