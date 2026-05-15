@@ -139,12 +139,23 @@ def _download_twitch_clip(clip_id: str) -> str | None:
     import tempfile
     from pathlib import Path
 
-    # Raw GQL query — no persisted hash needed
-    gql_query = f'{{ clip(slug: "{clip_id}") {{ videoQualities {{ frameRate quality sourceURL }} }} }}'
+    from urllib.parse import quote
 
+    # GQL query — requests both video qualities AND a signed playback token
+    # The /nauth/ CloudFront URLs require ?sig=...&token=... to download
+    gql_query = (
+        '{ clip(slug: "' + clip_id + '") {'
+        '  videoQualities { frameRate quality sourceURL } '
+        '  playbackAccessToken(params: { platform: "web" playerBackend: "mediaplayer" playerType: "site" }) {'
+        '    signature value'
+        '  }'
+        '} }'
+    )
+
+    # Try our app client ID first; fall back to Twitch's public website client ID
     client_ids = [
         os.environ.get("TWITCH_CLIENT_ID", ""),
-        "kimne78kx3ncx6brgo4mv6wki5h1ko",  # Twitch's own website client ID (public)
+        "kimne78kx3ncx6brgo4mv6wki5h1ko",
     ]
 
     for client_id in client_ids:
@@ -161,15 +172,25 @@ def _download_twitch_clip(clip_id: str) -> str | None:
                 print(f"[eventsub] GQL {r.status_code} with client {client_id[:8]}...")
                 continue
 
-            qualities = (r.json().get("data", {}).get("clip") or {}).get("videoQualities", [])
+            clip_data = (r.json().get("data", {}).get("clip") or {})
+            qualities  = clip_data.get("videoQualities", [])
+            token_data = clip_data.get("playbackAccessToken") or {}
+
             if not qualities:
-                print(f"[eventsub] No qualities returned for {clip_id} (client {client_id[:8]}...)")
+                print(f"[eventsub] No qualities for {clip_id} ({client_id[:8]}...)")
                 continue
 
             best      = max(qualities, key=lambda q: int(q.get("quality", "0")))
             video_url = best.get("sourceURL")
             if not video_url:
                 continue
+
+            # Append signed token if present (required for /nauth/ CloudFront URLs)
+            sig   = token_data.get("signature", "")
+            token = token_data.get("value", "")
+            if sig and token:
+                video_url = f"{video_url}?sig={sig}&token={quote(token)}"
+                print(f"[eventsub] Using signed URL for {clip_id}")
 
             tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
             tmp.close()
