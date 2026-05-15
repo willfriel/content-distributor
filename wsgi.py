@@ -11,3 +11,6 @@ with app.app_context():
     _seed_reference_accounts()
 
 init_scheduler(app)
+
+from integrations.twitch_eventsub import subscribe_all_streamers
+subscribe_all_streamers(app)

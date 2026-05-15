@@ -2148,6 +2148,39 @@ def delete_link(link_id):
 
 
 # ---------------------------------------------------------------------------
+# Twitch EventSub webhook
+# ---------------------------------------------------------------------------
+
+@app.route("/webhook/twitch", methods=["POST"])
+def twitch_eventsub_webhook():
+    from integrations.twitch_eventsub import verify_signature, handle_online, handle_offline
+
+    body    = request.get_data()
+    headers = dict(request.headers)
+
+    if not verify_signature(body, headers):
+        return jsonify({"error": "invalid signature"}), 403
+
+    msg_type = request.headers.get("Twitch-Eventsub-Message-Type", "")
+
+    if msg_type == "webhook_callback_verification":
+        payload = request.get_json(force=True)
+        return payload.get("challenge", ""), 200, {"Content-Type": "text/plain"}
+
+    if msg_type == "notification":
+        payload    = request.get_json(force=True)
+        event_type = payload.get("subscription", {}).get("type", "")
+        event      = payload.get("event", {})
+
+        if event_type == "stream.online":
+            handle_online(event)
+        elif event_type == "stream.offline":
+            handle_offline(event, app)
+
+    return "", 204
+
+
+# ---------------------------------------------------------------------------
 # DB init + seed
 # ---------------------------------------------------------------------------
 
@@ -2229,4 +2262,6 @@ if __name__ == "__main__":
         _seed_links()
     from pipeline.scheduler import init_scheduler
     init_scheduler(app)
+    from integrations.twitch_eventsub import subscribe_all_streamers
+    subscribe_all_streamers(app)
     app.run(debug=True, port=5000, use_reloader=False)

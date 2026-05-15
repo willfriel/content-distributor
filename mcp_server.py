@@ -33,14 +33,14 @@ def _api(method: str, path: str, data: dict = None) -> dict:
 # MCP protocol helpers
 # ---------------------------------------------------------------------------
 
-def _respond(result):
-    msg = {"jsonrpc": "2.0", "id": 1, "result": result}
+def _respond(result, req_id=None):
+    msg = {"jsonrpc": "2.0", "id": req_id, "result": result}
     sys.stdout.write(json.dumps(msg) + "\n")
     sys.stdout.flush()
 
 
-def _error(msg):
-    err = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": msg}}
+def _error(msg, req_id=None):
+    err = {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32000, "message": msg}}
     sys.stdout.write(json.dumps(err) + "\n")
     sys.stdout.flush()
 
@@ -64,7 +64,7 @@ TOOLS = [
                 "account":     {"type": "string", "description": "Account/channel handle"},
                 "niche":       {"type": "string", "description": "Which niche this fits: trading, fitness, crime, sports, gaming, everything, kids"},
                 "hook":        {"type": "string", "description": "The first line or opening 3 seconds — what grabbed attention"},
-                "format":      {"type": "string", "description": "e.g. talking head, clips montage, text overlay, POV, reaction"},
+                "format":      {"type": "string", "description": "AI-replicable formats only — clips montage, text overlay, voiceover+broll, stock footage+captions, animated, screenshot slideshow. Skip if a real human face is on camera (selfie/talking head/facecam)."},
                 "caption":     {"type": "string", "description": "The caption text if visible"},
                 "hashtags":    {"type": "array", "items": {"type": "string"}, "description": "Hashtags used"},
                 "engagement":  {"type": "string", "description": "Rough engagement signal: low / medium / high / viral"},
@@ -220,38 +220,39 @@ def main():
         except json.JSONDecodeError:
             continue
 
-        method = msg.get("method", "")
+        method  = msg.get("method", "")
+        req_id  = msg.get("id")
 
         if method == "initialize":
             _respond({
                 "protocolVersion": "2024-11-05",
                 "capabilities":    {"tools": {}},
                 "serverInfo":      {"name": "content-distributor", "version": "1.0.0"},
-            })
+            }, req_id)
 
         elif method == "tools/list":
-            _respond({"tools": TOOLS})
+            _respond({"tools": TOOLS}, req_id)
 
         elif method == "tools/call":
             tool_name = msg.get("params", {}).get("name")
             tool_args  = msg.get("params", {}).get("arguments", {})
             handler    = HANDLERS.get(tool_name)
             if not handler:
-                _error(f"Unknown tool: {tool_name}")
+                _error(f"Unknown tool: {tool_name}", req_id)
                 continue
             try:
                 result = handler(tool_args)
                 _respond({
                     "content": [{"type": "text", "text": json.dumps(result, indent=2)}]
-                })
+                }, req_id)
             except Exception as e:
-                _error(str(e))
+                _error(str(e), req_id)
 
         elif method == "notifications/initialized":
             pass  # no response needed
 
         else:
-            _error(f"Unknown method: {method}")
+            _error(f"Unknown method: {method}", req_id)
 
 
 if __name__ == "__main__":

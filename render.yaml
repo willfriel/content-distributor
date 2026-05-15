@@ -51,6 +51,8 @@ services:
         sync: false
       - key: INSTAGRAM_SCRAPER_PASS
         sync: false
+      - key: TWITCH_WEBHOOK_SECRET
+        sync: false
 
 databases:
   - name: content-distributor-db
