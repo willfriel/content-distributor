@@ -2175,7 +2175,7 @@ def manual_post_clip(streamer):
 
     try:
         from integrations.twitch_eventsub import _collect_and_post
-        _collect_and_post(streamer.lower(), None, app)
+        _collect_and_post(streamer.lower(), None, app, all_time_only=True)
         return jsonify({"status": "completed", "streamer": streamer, "log": log_buf.getvalue()})
     except Exception:
         return jsonify({"status": "error", "streamer": streamer,

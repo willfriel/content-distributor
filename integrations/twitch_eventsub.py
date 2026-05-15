@@ -130,11 +130,17 @@ def handle_offline(event: dict, app):
 # Clip collection + posting
 # ---------------------------------------------------------------------------
 
-def _collect_and_post(login: str, started_at: str | None, app):
+def _clip_download_url(clip: dict) -> str:
+    """Return the clips.twitch.tv URL which yt-dlp handles reliably."""
+    return f"https://clips.twitch.tv/{clip['id']}"
+
+
+def _collect_and_post(login: str, started_at: str | None, app, all_time_only: bool = False):
     """
     Fetch up to 3 clips for a streamer:
-      1. Top clips from the last 24 hours (by view count)
-      2. Pad with all-time top clips if fewer than 3 were found
+      1. Top clips from the last 24 hours by view count (skipped if all_time_only=True)
+      2. Pad with all-time top clips if fewer than 3 found in 24h
+    Uses clips.twitch.tv URLs for reliable yt-dlp downloads.
     """
     from datetime import timedelta
     print(f"[eventsub] Fetching clips for {login}...")
@@ -148,17 +154,20 @@ def _collect_and_post(login: str, started_at: str | None, app):
         return
 
     try:
-        # --- Last 24 hours ---
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        r = requests.get(f"{_BASE}/clips",
-                         params={"broadcaster_id": broadcaster_id, "first": 20, "started_at": since},
-                         headers=headers, timeout=15)
-        r.raise_for_status()
-        recent = sorted(r.json().get("data", []), key=lambda c: c.get("view_count", 0), reverse=True)
-        selected = recent[:3]
+        selected = []
 
-        # --- Pad with all-time if fewer than 3 ---
-        # Twitch requires explicit started_at to return clips across full history
+        # --- Last 24 hours (EventSub flow only) ---
+        if not all_time_only:
+            since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            r = requests.get(f"{_BASE}/clips",
+                             params={"broadcaster_id": broadcaster_id, "first": 20, "started_at": since},
+                             headers=headers, timeout=15)
+            r.raise_for_status()
+            recent = sorted(r.json().get("data", []), key=lambda c: c.get("view_count", 0), reverse=True)
+            # Only include 24h clips that have at least 500 views — avoids brand-new zero-view clips
+            selected = [c for c in recent if c.get("view_count", 0) >= 500][:3]
+
+        # --- All-time top clips (always used to pad, or as primary for manual trigger) ---
         if len(selected) < 3:
             seen = {c["id"] for c in selected}
             r2 = requests.get(f"{_BASE}/clips",
@@ -180,7 +189,7 @@ def _collect_and_post(login: str, started_at: str | None, app):
         print(f"[eventsub] Posting {len(selected)} clip(s) for {login}")
         for clip in selected:
             print(f"[eventsub]   → '{clip['title']}' ({clip['view_count']} views)")
-            _post_clip(clip["url"], clip.get("title", f"{login} clip"), login, app)
+            _post_clip(_clip_download_url(clip), clip.get("title", f"{login} clip"), login, app)
 
     except Exception as e:
         print(f"[eventsub] Clip collection failed for {login}: {e}")
