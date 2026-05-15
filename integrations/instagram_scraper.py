@@ -14,12 +14,12 @@ from datetime import datetime
 def _get_loader():
     """Build an instaloader instance, logged in if credentials are available."""
     try:
-        import instaloader
+        import instaloader as _instaloader
     except ImportError:
         print("[scraper] instaloader not installed")
         return None
 
-    L = instaloader.Instaloader(
+    L = _instaloader.Instaloader(
         download_pictures         = False,
         download_videos           = False,
         download_video_thumbnails = False,
@@ -47,6 +47,12 @@ def scrape_account(handle: str, max_posts: int = 30) -> list[dict]:
     Scrape recent posts from a public Instagram account.
     Returns list of post dicts with caption, likes, comments, views, etc.
     """
+    try:
+        import instaloader as _instaloader
+    except ImportError:
+        print("[scraper] instaloader not installed")
+        return []
+
     L = _get_loader()
     if not L:
         return []
@@ -55,7 +61,7 @@ def scrape_account(handle: str, max_posts: int = 30) -> list[dict]:
 
     posts = []
     try:
-        profile = instaloader.Profile.from_username(L.context, handle)
+        profile = _instaloader.Profile.from_username(L.context, handle)
         for post in itertools.islice(profile.get_posts(), max_posts):
             caption   = post.caption or ""
             hashtags  = re.findall(r"#\w+", caption)
