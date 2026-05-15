@@ -2153,35 +2153,15 @@ def delete_link(link_id):
 
 @app.route("/api/eventsub/post-clip/<streamer>", methods=["POST"])
 def manual_post_clip(streamer):
-    """Fetch top clips for a streamer and post to twitch niche. Runs synchronously for visibility."""
-    import traceback
-    import io
-    import sys
+    """Fetch top all-time clips for a streamer and post to twitch niche (async)."""
+    import threading
+    from integrations.twitch_eventsub import _collect_and_post
 
-    log_buf = io.StringIO()
-
-    class TeeStream:
-        def __init__(self, *streams):
-            self.streams = streams
-        def write(self, data):
-            for s in self.streams:
-                s.write(data)
-        def flush(self):
-            for s in self.streams:
-                s.flush()
-
-    old_stdout = sys.stdout
-    sys.stdout = TeeStream(old_stdout, log_buf)
-
-    try:
-        from integrations.twitch_eventsub import _collect_and_post
+    def run():
         _collect_and_post(streamer.lower(), None, app, all_time_only=True)
-        return jsonify({"status": "completed", "streamer": streamer, "log": log_buf.getvalue()})
-    except Exception:
-        return jsonify({"status": "error", "streamer": streamer,
-                        "log": log_buf.getvalue(), "traceback": traceback.format_exc()}), 500
-    finally:
-        sys.stdout = old_stdout
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"status": "started", "streamer": streamer}), 202
 
 
 @app.route("/api/eventsub/debug/<streamer>", methods=["GET"])
