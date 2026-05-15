@@ -298,7 +298,31 @@ def _generate_hook(streamer: str, clip_title: str) -> str:
         return clip_title[:60]
 
 
-def _format_vertical(input_path: str, hook: str, cta: str) -> tuple[str, str]:
+def _transcribe_clip(video_path: str) -> str | None:
+    """
+    Transcribe clip audio via OpenAI Whisper API.
+    Returns SRT string or None if unavailable.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        with open(video_path, "rb") as f:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                response_format="srt",
+            )
+        print(f"[eventsub] Transcribed {video_path} ({len(transcript)} chars)")
+        return transcript
+    except Exception as e:
+        print(f"[eventsub] Whisper failed: {e}")
+        return None
+
+
+def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = None) -> tuple[str, str]:
     """
     Convert a horizontal clip to 9:16 vertical (1080x1920) with text overlays.
     Randomly picks black or blur background — tagged for A/B learning.
@@ -325,6 +349,22 @@ def _format_vertical(input_path: str, hook: str, cta: str) -> tuple[str, str]:
         f":x=(w-text_w)/2:y=h-220:shadowcolor=black:shadowx=3:shadowy=3"
     )
 
+    # Write SRT to temp file if provided
+    srt_path = None
+    if srt:
+        srt_path = input_path.replace(".mp4", ".srt")
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write(srt)
+
+    # Caption filter — bold white text, black outline, sits inside the clip area
+    cap_style = (
+        "FontName=Arial,Bold=1,FontSize=16,"
+        "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+        "BorderStyle=1,Outline=2,Shadow=0,"
+        "MarginV=15,Alignment=2"
+    )
+    sub_filter = f"subtitles='{srt_path}':force_style='{cap_style}'" if srt_path else None
+
     try:
         if bg_style == "blur":
             fc = (
@@ -333,23 +373,38 @@ def _format_vertical(input_path: str, hook: str, cta: str) -> tuple[str, str]:
                 f"[0:v]scale=1080:-2[fg];"
                 f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
                 f"[comp]{dt_hook}[h];"
-                f"[h]{dt_cta}[out]"
+                f"[h]{dt_cta}[base]"
             )
+            if sub_filter:
+                fc += f";[base]{sub_filter}[out]"
+                map_out = "[out]"
+            else:
+                fc = fc.replace("[base]", "[out]")
+                map_out = "[out]"
             cmd = ["ffmpeg", "-i", input_path, "-filter_complex", fc,
-                   "-map", "[out]", "-map", "0:a?",
+                   "-map", map_out, "-map", "0:a?",
                    "-c:v", "libx264", "-c:a", "aac", "-shortest", "-y", out_path]
         else:
             vf = f"scale=1080:-2,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,{dt_hook},{dt_cta}"
+            if sub_filter:
+                vf += f",{sub_filter}"
             cmd = ["ffmpeg", "-i", input_path, "-vf", vf,
                    "-c:v", "libx264", "-c:a", "aac", "-y", out_path]
 
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-        print(f"[eventsub] Formatted vertical ({bg_style} bg): {out_path}")
+        subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+        print(f"[eventsub] Formatted vertical ({bg_style} bg, captions={'yes' if srt_path else 'no'}): {out_path}")
         return out_path, bg_style
 
     except Exception as e:
         print(f"[eventsub] ffmpeg format failed ({e}), using original")
         return input_path, "original"
+    finally:
+        if srt_path:
+            try:
+                import os as _os
+                _os.unlink(srt_path)
+            except Exception:
+                pass
 
 
 def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
@@ -391,10 +446,13 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
             import shutil
             shutil.move(video_path, str(raw_dest))
 
-            # Generate hook and format to 9:16 vertical
+            # Transcribe audio for captions
+            srt = _transcribe_clip(str(raw_dest))
+
+            # Generate hook and format to 9:16 vertical with burned-in captions
             hook         = _generate_hook(streamer, clip_title)
             cta          = f"To keep watching {streamer} clips follow for more!"
-            fmt_path, bg = _format_vertical(str(raw_dest), hook, cta)
+            fmt_path, bg = _format_vertical(str(raw_dest), hook, cta, srt=srt)
 
             # Move formatted file to final destination
             dest = static_dir / f"pipeline_twitch_event_{run.id}.mp4"
