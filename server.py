@@ -1121,6 +1121,8 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="utf-8">
   <title>Content Distributor</title>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3124359023055346"
+     crossorigin="anonymous"></script>
   <style>
     * { box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
