@@ -132,71 +132,67 @@ def handle_offline(event: dict, app):
 
 def _download_twitch_clip(clip_id: str) -> str | None:
     """
-    Download a Twitch clip directly via GQL API — bypasses yt-dlp which fails
-    on Twitch's HLS-based clip delivery.
-    Returns temp file path or None.
+    Download a Twitch clip directly via GQL — bypasses yt-dlp HLS issues.
+    Tries our app client ID first, then falls back to Twitch's public website
+    client ID which works for public clips without a persisted query hash.
     """
     import tempfile
     from pathlib import Path
 
-    client_id = os.environ.get("TWITCH_CLIENT_ID", "")
-    if not client_id:
-        print("[eventsub] TWITCH_CLIENT_ID not set")
-        return None
+    # Raw GQL query — no persisted hash needed
+    gql_query = f'{{ clip(slug: "{clip_id}") {{ videoQualities {{ frameRate quality sourceURL }} }} }}'
 
-    # GQL persisted query for clip access token + video qualities
-    gql_payload = [{
-        "operationName": "VideoAccessToken_Clip",
-        "variables":     {"slug": clip_id},
-        "extensions": {
-            "persistedQuery": {
-                "version":    1,
-                "sha256Hash": "36b89d2507fce29e5ca551df756d27c1cfe079e2609642b4390aa4c35796eb11",
-            }
-        },
-    }]
+    client_ids = [
+        os.environ.get("TWITCH_CLIENT_ID", ""),
+        "kimne78kx3ncx6brgo4mv6wki5h1ko",  # Twitch's own website client ID (public)
+    ]
 
-    try:
-        r = requests.post(
-            "https://gql.twitch.tv/gql",
-            json=gql_payload,
-            headers={"Client-Id": client_id},
-            timeout=15,
-        )
-        r.raise_for_status()
-        clip_data = r.json()[0].get("data", {}).get("clip", {}) or {}
-        qualities  = clip_data.get("videoQualities", [])
+    for client_id in client_ids:
+        if not client_id:
+            continue
+        try:
+            r = requests.post(
+                "https://gql.twitch.tv/gql",
+                json={"query": gql_query},
+                headers={"Client-Id": client_id, "Content-Type": "application/json"},
+                timeout=15,
+            )
+            if r.status_code != 200:
+                print(f"[eventsub] GQL {r.status_code} with client {client_id[:8]}...")
+                continue
 
-        if not qualities:
-            print(f"[eventsub] GQL returned no video qualities for {clip_id}")
-            return None
+            qualities = (r.json().get("data", {}).get("clip") or {}).get("videoQualities", [])
+            if not qualities:
+                print(f"[eventsub] No qualities returned for {clip_id} (client {client_id[:8]}...)")
+                continue
 
-        # Pick highest quality source URL
-        best      = max(qualities, key=lambda q: int(q.get("quality", "0")))
-        video_url = best.get("sourceURL")
-        if not video_url:
-            return None
+            best      = max(qualities, key=lambda q: int(q.get("quality", "0")))
+            video_url = best.get("sourceURL")
+            if not video_url:
+                continue
 
-        # Download the MP4 directly
-        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-        tmp.close()
-        with requests.get(video_url, stream=True, timeout=120) as resp:
-            resp.raise_for_status()
-            with open(tmp.name, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=65536):
-                    f.write(chunk)
+            tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+            tmp.close()
+            with requests.get(video_url, stream=True, timeout=120) as resp:
+                resp.raise_for_status()
+                with open(tmp.name, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        f.write(chunk)
 
-        size = Path(tmp.name).stat().st_size
-        if size == 0:
-            print(f"[eventsub] Downloaded 0 bytes for {clip_id}")
-            return None
+            size = Path(tmp.name).stat().st_size
+            if size == 0:
+                print(f"[eventsub] 0 bytes for {clip_id}")
+                continue
 
-        print(f"[eventsub] Downloaded {clip_id}: {size / 1024 / 1024:.1f} MB")
-        return tmp.name
+            print(f"[eventsub] Downloaded {clip_id}: {size / 1024 / 1024:.1f} MB")
+            return tmp.name
 
-    except Exception as e:
-        print(f"[eventsub] GQL download failed for {clip_id}: {e}")
-        return None
+        except Exception as e:
+            print(f"[eventsub] GQL failed ({client_id[:8]}...): {e}")
+            continue
+
+    print(f"[eventsub] All download methods failed for {clip_id}")
+    return None
 
 
 def _collect_and_post(login: str, started_at: str | None, app, all_time_only: bool = False):
