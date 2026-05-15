@@ -2164,6 +2164,36 @@ def manual_post_clip(streamer):
     return jsonify({"status": "started", "streamer": streamer}), 202
 
 
+@app.route("/api/eventsub/debug/<streamer>", methods=["GET"])
+def debug_clip_fetch(streamer):
+    """Synchronously fetch clips for a streamer and return raw result for debugging."""
+    import traceback
+    try:
+        from integrations.twitch_eventsub import _twitch_headers, _get_user_id
+        import requests as req
+        import os
+
+        headers = _twitch_headers()
+        if not headers:
+            return jsonify({"error": "no twitch headers — check TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET"}), 500
+
+        broadcaster_id = _get_user_id(streamer.lower())
+        if not broadcaster_id:
+            return jsonify({"error": f"user not found: {streamer}"}), 404
+
+        r = req.get("https://api.twitch.tv/helix/clips",
+                    params={"broadcaster_id": broadcaster_id, "first": 5},
+                    headers=headers, timeout=15)
+        return jsonify({
+            "broadcaster_id": broadcaster_id,
+            "status_code":    r.status_code,
+            "clips":          r.json().get("data", []),
+            "raw":            r.text[:500],
+        })
+    except Exception:
+        return jsonify({"error": traceback.format_exc()}), 500
+
+
 # ---------------------------------------------------------------------------
 # Twitch EventSub webhook
 # ---------------------------------------------------------------------------
