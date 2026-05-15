@@ -228,10 +228,10 @@ def fetch_pexels_candidates(niche: str, max_results: int = 3) -> list[dict]:
         videos = r.json().get("videos", [])
         candidates = []
         for v in videos:
-            # Get the HD portrait file
+            # Get best portrait file capped at 1080p to avoid huge 4K downloads
             files = sorted(v.get("video_files", []),
                            key=lambda f: f.get("height", 0), reverse=True)
-            portrait = next((f for f in files if f.get("height", 0) >= 720), None)
+            portrait = next((f for f in files if 720 <= f.get("height", 0) <= 1080), None)
             if not portrait:
                 continue
             candidates.append({
