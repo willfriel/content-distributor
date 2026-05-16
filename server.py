@@ -2381,11 +2381,21 @@ def internal_clip_done():
     if not _verify_callback_secret():
         return jsonify({"error": "unauthorized"}), 401
 
+    try:
+        return _internal_clip_done_impl()
+    except Exception as _e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[clip-done] UNHANDLED ERROR: {tb}")
+        return jsonify({"error": str(_e), "traceback": tb}), 500
+
+
+def _internal_clip_done_impl():
     data   = request.get_json(force=True) or {}
     run_id = int(data.get("run_id") or 0)
     status = data.get("status", "failed")
 
-    run = PipelineRun.query.get(run_id)
+    run = db.session.get(PipelineRun, run_id)
 
     if status != "success":
         note = data.get("note", "github runner failed")
