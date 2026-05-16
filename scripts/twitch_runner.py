@@ -113,7 +113,7 @@ def main():
         # ----- 3. Hook -----
         print("Generating hook text...")
         hook = _generate_hook(streamer, clip_title)
-        cta  = f"To keep watching {streamer} clips follow for more!"
+        cta  = f"Like & follow for more {streamer} clips!"
         print(f"Hook: '{hook}'")
 
         # ----- 4. Format 9:16 vertical -----

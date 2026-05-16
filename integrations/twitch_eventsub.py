@@ -351,55 +351,69 @@ def _transcribe_clip(video_path: str) -> str | None:
 
 def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = None) -> tuple[str, str]:
     """
-    Convert a horizontal clip to 9:16 vertical (1080x1920) with text overlays.
-    Randomly picks black or blur background — tagged for A/B learning.
+    Compose a 9:16 canvas (720x1280) with three zones:
+      Top third    (y 0–426):   hook text
+      Middle third (y 427–841): original 16:9 clip at full width (720x405), end-to-end
+      Bottom third (y 842–1280): CTA text
+    Background randomly chosen from 4 styles for A/B learning.
     Returns (output_path, bg_style).
     """
     import subprocess
     import random
 
-    bg_style = random.choice(["black", "blur"])
+    CANVAS_W, CANVAS_H = 720, 1280
+    VID_W,    VID_H    = 720, 405           # 16:9 at full canvas width
+    VID_Y              = (CANVAS_H - VID_H) // 2   # 437 — centers in canvas / middle third
+    HOOK_Y             = 90                 # top of hook text, sits in top third
+    CTA_Y              = VID_Y + VID_H + 55 # top of CTA text, sits in bottom third
+    # Subtitle MarginV: distance from canvas bottom to bottom of video = 1280 - 842 = 438
+    SUB_MARGIN_V       = CANVAS_H - (VID_Y + VID_H) + 30
+
+    bg_style = random.choice(["black", "blur", "dark_purple", "dark_blue"])
     out_path = input_path.replace(".mp4", "_v.mp4")
 
     def esc(t: str) -> str:
-        return t.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\%")
+        return t.replace("\\", "\\\\").replace("’", "\\’").replace(":", "\\:").replace("%", "\\%")
 
     hook_esc = esc(hook[:70])
     cta_esc  = esc(cta[:90])
 
     dt_hook = (
-        f"drawtext=text='{hook_esc}':fontsize=90:fontcolor=white"
-        f":x=(w-text_w)/2:y=250:shadowcolor=black:shadowx=4:shadowy=4"
+        f"drawtext=text=’{hook_esc}’:fontsize=78:fontcolor=white"
+        f":x=(w-text_w)/2:y={HOOK_Y}:shadowcolor=black:shadowx=4:shadowy=4"
     )
     dt_cta = (
-        f"drawtext=text='{cta_esc}':fontsize=55:fontcolor=white"
-        f":x=(w-text_w)/2:y=h-220:shadowcolor=black:shadowx=3:shadowy=3"
+        f"drawtext=text=’{cta_esc}’:fontsize=46:fontcolor=white"
+        f":x=(w-text_w)/2:y={CTA_Y}:shadowcolor=black:shadowx=3:shadowy=3"
     )
 
+    bitrate_flags = ["-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "5000k"]
+
     try:
-        # Pass 1: vertical layout with hook + CTA — 720x1280 to keep upload size under ~15 MB
-        bitrate_flags = ["-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "5000k"]
         if bg_style == "blur":
             fc = (
-                f"[0:v]scale=720:1280:force_original_aspect_ratio=increase,"
-                f"crop=720:1280,boxblur=25:25[bg];"
-                f"[0:v]scale=720:-2[fg];"
-                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
+                f"[0:v]scale={CANVAS_W}:{CANVAS_H}:force_original_aspect_ratio=increase,"
+                f"crop={CANVAS_W}:{CANVAS_H},boxblur=25:25[bg];"
+                f"[0:v]scale={VID_W}:{VID_H}[vid];"
+                f"[bg][vid]overlay=0:{VID_Y}[comp];"
                 f"[comp]{dt_hook}[h];"
                 f"[h]{dt_cta}[out]"
             )
-            cmd1 = ["ffmpeg", "-i", input_path, "-filter_complex", fc,
-                    "-map", "[out]", "-map", "0:a?",
-                    "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
-                    *bitrate_flags,
-                    "-c:a", "aac", "-shortest", "-y", out_path]
         else:
-            vf = f"scale=720:-2,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,{dt_hook},{dt_cta}"
-            cmd1 = ["ffmpeg", "-i", input_path, "-vf", vf,
-                    "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
-                    *bitrate_flags,
-                    "-c:a", "aac", "-y", out_path]
+            bg_color = {"black": "0x000000", "dark_purple": "0x1a0a2e", "dark_blue": "0x0a0a1a"}.get(bg_style, "0x000000")
+            fc = (
+                f"color=c={bg_color}:size={CANVAS_W}x{CANVAS_H}:rate=25[bg];"
+                f"[0:v]scale={VID_W}:{VID_H}[vid];"
+                f"[bg][vid]overlay=0:{VID_Y}[comp];"
+                f"[comp]{dt_hook}[h];"
+                f"[h]{dt_cta}[out]"
+            )
 
+        cmd1 = ["ffmpeg", "-i", input_path, "-filter_complex", fc,
+                "-map", "[out]", "-map", "0:a?",
+                "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
+                *bitrate_flags,
+                "-c:a", "aac", "-shortest", "-y", out_path]
         subprocess.run(cmd1, check=True, capture_output=True, timeout=180)
         print(f"[eventsub] Formatted vertical ({bg_style} bg): {out_path}")
 
@@ -407,17 +421,16 @@ def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = Non
         print(f"[eventsub] ffmpeg pass 1 failed ({e}), using original")
         return input_path, "original"
 
-    # Pass 2: burn subtitles (separate pass avoids filter-chain comma escaping issues)
+    # Pass 2: burn subtitles onto the video portion (middle third)
     if srt:
         srt_path = out_path.replace(".mp4", ".srt")
-        cap_path  = out_path.replace(".mp4", "_cap.mp4")
+        cap_path = out_path.replace(".mp4", "_cap.mp4")
         try:
             with open(srt_path, "w", encoding="utf-8") as f:
                 f.write(srt)
-            # ASS-style force_style — use | as separator trick via subtitles filter
             cmd2 = [
                 "ffmpeg", "-i", out_path,
-                "-vf", f"subtitles={srt_path}:force_style='Bold=1,FontSize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,MarginV=15,Alignment=2'",
+                "-vf", f"subtitles={srt_path}:force_style=’Bold=1,FontSize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,MarginV={SUB_MARGIN_V},Alignment=2’",
                 "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
                 "-c:a", "aac", "-y", cap_path,
             ]

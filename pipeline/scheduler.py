@@ -331,6 +331,7 @@ def run_kids_pipeline(app):
             # ----------------------------------------------------------------
             # Step 1 — TEASER (Short for YouTube + Instagram Reel)
             # ----------------------------------------------------------------
+            teaser_item = None
             teaser_candidates = get_candidates("kids")
             teaser_real       = [c for c in teaser_candidates if c.get("url") and
                                   c.get("source_type") != "ai_pending"]
@@ -438,7 +439,7 @@ def run_kids_pipeline(app):
                     )
                     print(f"[kids] Full video posted: {story['title']}")
 
-            mark_posted(story_id, teaser_item.id if teaser_real else None, app)
+            mark_posted(story_id, teaser_item.id if teaser_item else None, app)
 
             run.status       = "completed"
             run.note         = f"Lumi Tales: {story['title']}"
@@ -454,7 +455,40 @@ def run_kids_pipeline(app):
 
 
 def _download_video(url: str, max_duration: int = None) -> str | None:
-    """Download a video to a temp file using yt-dlp. Returns path or None."""
+    """Download a video to a temp file. Returns path or None."""
+    import re
+
+    # Twitch clip URLs — yt-dlp is unreliable; use GQL downloader directly
+    twitch_clip_pattern = re.compile(r"twitch\.tv/(?:[^/]+/clip/|clips\.twitch\.tv/)([A-Za-z0-9_-]+)")
+    twitch_match = twitch_clip_pattern.search(url)
+    if twitch_match:
+        clip_slug = twitch_match.group(1)
+        try:
+            from integrations.twitch_eventsub import _download_twitch_clip
+            return _download_twitch_clip(clip_slug)
+        except Exception as e:
+            print(f"[pipeline] Twitch GQL download failed for {clip_slug}: {e}")
+            return None
+
+    # Direct MP4 URLs (Pexels, etc.) — stream download via requests
+    if re.search(r"pexels\.com|\.mp4(\?|$)", url):
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+            tmp.close()
+            import requests as _req
+            with _req.get(url, stream=True, timeout=120,
+                          headers={"User-Agent": "Mozilla/5.0"}) as r:
+                r.raise_for_status()
+                with open(tmp.name, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=65536):
+                        f.write(chunk)
+            size = Path(tmp.name).stat().st_size
+            return tmp.name if size > 0 else None
+        except Exception as e:
+            print(f"[pipeline] Direct download failed for {url}: {e}")
+            return None
+
+    # General fallback — yt-dlp
     try:
         import yt_dlp
         tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)

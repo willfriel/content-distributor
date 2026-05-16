@@ -63,3 +63,15 @@ jobs:
           ELEVENLABS_API_KEY:   ${{ secrets.ELEVENLABS_API_KEY }}
           CALLBACK_SECRET:      ${{ secrets.CALLBACK_SECRET }}
         run: python scripts/twitch_runner.py
+
+      - name: Notify Render on failure
+        if: failure()
+        env:
+          RUN_ID:          ${{ inputs.run_id }}
+          CALLBACK_URL:    ${{ inputs.callback_url }}
+          CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
+        run: |
+          curl -s -X POST "$CALLBACK_URL/api/internal/clip-done" \
+            -H "Authorization: Bearer $CALLBACK_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"run_id\": \"$RUN_ID\", \"status\": \"failed\", \"note\": \"github actions runner failed\"}"

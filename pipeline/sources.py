@@ -31,6 +31,7 @@ TWITCH_NICHE_STREAMERS = [
     "jidionpremium",
     "lacyoffline_",
     "joe_bartolozzi",
+    "jasontheween",
 ]
 
 NICHE_CONFIG = {
@@ -111,6 +112,8 @@ def fetch_youtube_candidates(niche: str, api_key: str, max_results: int = 5) -> 
     """Search YouTube for short-form content in the niche. Prefers CC-licensed videos."""
     config  = NICHE_CONFIG.get(niche, {})
     queries = config.get("youtube_queries", [f"{niche} shorts"])
+    if not queries:
+        return []
     query   = random.choice(queries)
 
     try:

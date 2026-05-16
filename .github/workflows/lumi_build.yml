@@ -64,3 +64,16 @@ jobs:
           LUMI_NARRATOR_VOICE_ID:  ${{ secrets.LUMI_NARRATOR_VOICE_ID }}
           CALLBACK_SECRET:         ${{ secrets.CALLBACK_SECRET }}
         run: python scripts/lumi_runner.py
+
+      - name: Notify Render on failure
+        if: failure()
+        env:
+          RUN_ID:          ${{ inputs.run_id }}
+          STORY_ID:        ${{ inputs.story_id }}
+          CALLBACK_URL:    ${{ inputs.callback_url }}
+          CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
+        run: |
+          curl -s -X POST "$CALLBACK_URL/api/internal/lumi-done" \
+            -H "Authorization: Bearer $CALLBACK_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"run_id\": \"$RUN_ID\", \"story_id\": \"$STORY_ID\", \"status\": \"failed\", \"note\": \"github actions runner failed\"}"
