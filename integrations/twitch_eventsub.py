@@ -377,12 +377,13 @@ def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = Non
     )
 
     try:
-        # Pass 1: vertical layout with hook + CTA
+        # Pass 1: vertical layout with hook + CTA — 720x1280 to keep upload size under ~15 MB
+        bitrate_flags = ["-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "5000k"]
         if bg_style == "blur":
             fc = (
-                f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-                f"crop=1080:1920,boxblur=25:25[bg];"
-                f"[0:v]scale=1080:-2[fg];"
+                f"[0:v]scale=720:1280:force_original_aspect_ratio=increase,"
+                f"crop=720:1280,boxblur=25:25[bg];"
+                f"[0:v]scale=720:-2[fg];"
                 f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
                 f"[comp]{dt_hook}[h];"
                 f"[h]{dt_cta}[out]"
@@ -390,11 +391,13 @@ def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = Non
             cmd1 = ["ffmpeg", "-i", input_path, "-filter_complex", fc,
                     "-map", "[out]", "-map", "0:a?",
                     "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
+                    *bitrate_flags,
                     "-c:a", "aac", "-shortest", "-y", out_path]
         else:
-            vf = f"scale=1080:-2,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,{dt_hook},{dt_cta}"
+            vf = f"scale=720:-2,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,{dt_hook},{dt_cta}"
             cmd1 = ["ffmpeg", "-i", input_path, "-vf", vf,
                     "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
+                    *bitrate_flags,
                     "-c:a", "aac", "-y", out_path]
 
         subprocess.run(cmd1, check=True, capture_output=True, timeout=180)
