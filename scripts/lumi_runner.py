@@ -62,6 +62,24 @@ def upload_video(path: Path, run_id: str) -> str | None:
         return None
 
 
+def upload_image(path: Path, run_id: str, suffix: str) -> str | None:
+    """POST an image file to Render and get back a public URL."""
+    try:
+        with open(path, "rb") as f:
+            resp = requests.post(
+                f"{CALLBACK_URL}/api/internal/image-upload",
+                headers=AUTH_HEADERS,
+                files={"image": (f"lumi_{run_id}_{suffix}.jpg", f, "image/jpeg")},
+                data={"run_id": run_id, "suffix": suffix},
+                timeout=60,
+            )
+        resp.raise_for_status()
+        return resp.json()["image_url"]
+    except Exception as e:
+        print(f"Image upload failed: {e}")
+        return None
+
+
 def notify(payload: dict):
     """POST the final status callback to Render."""
     try:
@@ -74,6 +92,125 @@ def notify(payload: dict):
         print(f"Callback sent: status={payload.get('status')}")
     except Exception as e:
         print(f"Callback failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Shorts creation
+# ---------------------------------------------------------------------------
+
+def make_shorts_clip(clip_paths: list, output_path: Path, target_secs: int = 45) -> bool:
+    """
+    Take the first N scene clips (up to target_secs total) and reformat
+    to 9:16 vertical for YouTube Shorts.
+    """
+    import subprocess, json as _json
+    selected = []
+    total    = 0.0
+
+    for p in clip_paths:
+        try:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", str(p)],
+                capture_output=True, text=True, timeout=10,
+            )
+            dur = 0.0
+            for s in _json.loads(probe.stdout).get("streams", []):
+                if s.get("duration"):
+                    dur = float(s["duration"]); break
+            if total + dur <= target_secs:
+                selected.append(str(p))
+                total += dur
+            else:
+                break
+        except Exception:
+            continue
+
+    if not selected:
+        return False
+
+    # Write concat list
+    concat_txt = output_path.parent / "shorts_concat.txt"
+    concat_txt.write_text("\n".join(f"file '{p}'" for p in selected))
+
+    # Concat → vertical 9:16 (720x1280) with black bars
+    cmd = [
+        "ffmpeg",
+        "-f", "concat", "-safe", "0", "-i", str(concat_txt),
+        "-vf", (
+            f"scale=720:-2:force_original_aspect_ratio=decrease,"
+            f"pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,"
+            f"drawtext=text='Watch the full episode on @LumiTales':fontsize=28:fontcolor=white"
+            f":x=(w-text_w)/2:y=h-80:shadowcolor=black:shadowx=2:shadowy=2"
+        ),
+        "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
+        "-c:a", "aac", "-y", str(output_path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=120)
+        concat_txt.unlink(missing_ok=True)
+        if result.returncode != 0:
+            print(f"Shorts ffmpeg failed: {result.stderr.decode()[-200:]}")
+            return False
+        print(f"Shorts created: {total:.1f}s from {len(selected)} scenes")
+        return True
+    except Exception as e:
+        print(f"Shorts creation error: {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Thumbnail generation
+# ---------------------------------------------------------------------------
+
+def generate_thumbnail(title: str, moral: str, output_path: Path) -> bool:
+    """
+    Generate a YouTube thumbnail: DALL-E close-up of Lumi + PIL text overlay.
+    Output: 1280x720 JPEG.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return False
+    try:
+        from openai import OpenAI
+        from PIL import Image, ImageDraw, ImageFilter
+        import io
+
+        client = OpenAI(api_key=api_key)
+        prompt = (
+            "2D flat vector illustration for a children's YouTube thumbnail. "
+            "Close-up portrait of Lumi — a 4-year-old girl with golden hair, big bright brown eyes, "
+            "gold star hair clip, yellow top — with a huge joyful expressive smile, "
+            "looking directly at the viewer. Soft pastel background with subtle sparkles. "
+            "No text anywhere in the image. Bright, vibrant, eye-catching. "
+            f"Mood: {moral[:60]}"
+        )
+        resp = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt[:4000],
+            size="1792x1024",
+            quality="standard",
+            n=1,
+        )
+        img_bytes = requests.get(resp.data[0].url, timeout=60).content
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGB").resize((1280, 720))
+
+        # Dark gradient bar at bottom for text readability
+        draw    = ImageDraw.Draw(img, "RGBA")
+        for y in range(480, 720):
+            alpha = int(200 * (y - 480) / 240)
+            draw.line([(0, y), (1280, y)], fill=(0, 0, 0, alpha))
+
+        # Episode title
+        draw2 = ImageDraw.Draw(img)
+        draw2.text((640, 610), title[:45], fill="white",   anchor="mm")
+        draw2.text((640, 670), "✨ Lumi Tales ✨", fill="#FFD700", anchor="mm")
+
+        img.save(str(output_path), "JPEG", quality=92)
+        print(f"Thumbnail generated: {output_path.name}")
+        return True
+    except Exception as e:
+        print(f"Thumbnail generation failed: {e}")
+        return False
 
 
 def fail(run_id: str, story_id: str, note: str):
@@ -167,22 +304,34 @@ def main():
         size_mb = out_path.stat().st_size / 1024 / 1024
         print(f"Episode assembled: {size_mb:.1f} MB")
 
-        # ----- 4. Upload -----
-        video_url = upload_video(out_path, run_id)
+        # ----- 4. Shorts + thumbnail (parallel with main upload) -----
+        shorts_path    = work_dir / "shorts.mp4"
+        thumbnail_path = work_dir / "thumbnail.jpg"
+
+        shorts_ok    = make_shorts_clip(clip_paths, shorts_path)
+        thumbnail_ok = generate_thumbnail(title, moral, thumbnail_path)
+
+        # ----- 5. Upload everything -----
+        video_url     = upload_video(out_path, run_id)
+        shorts_url    = upload_video(shorts_path, f"{run_id}_short") if shorts_ok else None
+        thumbnail_url = upload_image(thumbnail_path, run_id, "thumb") if thumbnail_ok else None
+
         if not video_url:
             fail(run_id, story_id, "video upload failed")
             return
 
-        # ----- 5. Callback -----
+        # ----- 6. Callback -----
         notify({
-            "run_id":       run_id,
-            "story_id":     story_id,
-            "status":       "success",
-            "video_url":    video_url,
-            "title":        title,
-            "moral":        moral,
-            "lesson_line":  script.get("lesson_line", ""),
-            "scenes_count": len(scenes),
+            "run_id":        run_id,
+            "story_id":      story_id,
+            "status":        "success",
+            "video_url":     video_url,
+            "shorts_url":    shorts_url,
+            "thumbnail_url": thumbnail_url,
+            "title":         title,
+            "moral":         moral,
+            "lesson_line":   script.get("lesson_line", ""),
+            "scenes_count":  len(scenes),
         })
         print(f"=== Done: {len(clip_paths)} scenes → {video_url} ===")
 

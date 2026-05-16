@@ -2250,6 +2250,32 @@ def internal_video_upload():
     return jsonify({"video_url": video_url})
 
 
+@app.route("/api/internal/image-upload", methods=["POST"])
+def internal_image_upload():
+    """Receive a thumbnail or image from GitHub Actions, save to static/images/."""
+    if not _verify_callback_secret():
+        return jsonify({"error": "unauthorized"}), 401
+    if "image" not in request.files:
+        return jsonify({"error": "no image file"}), 400
+
+    image_file = request.files["image"]
+    run_id     = request.form.get("run_id", "0")
+    suffix     = request.form.get("suffix", "img")
+
+    from pathlib import Path as _Path
+    save_dir = _Path(app.root_path) / "static" / "images" / "lumi"
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    filename  = f"lumi_{run_id}_{suffix}.jpg"
+    save_path = save_dir / filename
+    image_file.save(str(save_path))
+
+    base_url  = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
+    image_url = f"{base_url}/static/images/lumi/{filename}"
+    print(f"[callback] Image saved: {image_url}")
+    return jsonify({"image_url": image_url})
+
+
 @app.route("/api/internal/lumi-done", methods=["POST"])
 def internal_lumi_done():
     """GitHub Actions calls this when a Lumi episode is finished."""
@@ -2271,17 +2297,24 @@ def internal_lumi_done():
         db.session.commit()
         return jsonify({"ok": True})
 
-    video_url = data.get("video_url", "")
-    title     = data.get("title", "")
-    moral     = data.get("moral", "")
-    lesson    = data.get("lesson_line", "")
+    video_url     = data.get("video_url", "")
+    shorts_url    = data.get("shorts_url")
+    thumbnail_url = data.get("thumbnail_url")
+    title         = data.get("title", "")
+    moral         = data.get("moral", "")
+    lesson        = data.get("lesson_line", "")
 
     niche_obj = Niche.query.filter_by(name="kids", is_active=True).first()
-    yt_desc   = (
+    accounts  = SocialAccount.query.filter_by(
+        niche_id=niche_obj.id, is_active=True
+    ).all() if niche_obj else []
+
+    yt_desc = (
         f"{title}\n\n{lesson}\n\n"
         "#LumiTales #KidsTV #LearnWithLumi #EducationalKids #Toddlers"
     )
 
+    # Full episode → YouTube
     item = ContentQueue(
         niche_id       = niche_obj.id if niche_obj else None,
         video_url      = video_url,
@@ -2290,7 +2323,11 @@ def internal_lumi_done():
         platforms      = ["youtube"],
         use_opusclip   = False,
         status         = "pending",
-        upload_results = {"moral": moral, "scenes": data.get("scenes_count", 0)},
+        upload_results = {
+            "moral":         moral,
+            "scenes":        data.get("scenes_count", 0),
+            "thumbnail_url": thumbnail_url,
+        },
         clipped_urls   = [],
     )
     db.session.add(item)
@@ -2300,18 +2337,41 @@ def internal_lumi_done():
     if run:   run.status   = "completed"
     db.session.commit()
 
-    if niche_obj:
-        accounts = SocialAccount.query.filter_by(niche_id=niche_obj.id, is_active=True).all()
+    import threading as _threading
+
+    if accounts:
+        _threading.Thread(
+            target=_run_job, args=(item.id, accounts, False),
+            kwargs={"content_type": "kids_video"}, daemon=True,
+        ).start()
+
+    # YouTube Short → separate ContentQueue item
+    if shorts_url:
+        shorts_desc = (
+            f"{title} #Shorts\n\n{lesson}\n\n"
+            "Watch the full episode on @LumiTales! "
+            "#LumiTales #KidsShorts #LearnWithLumi #Toddlers"
+        )
+        short_item = ContentQueue(
+            niche_id       = niche_obj.id if niche_obj else None,
+            video_url      = shorts_url,
+            title          = f"{title[:80]} #Shorts",
+            description    = shorts_desc,
+            platforms      = ["youtube"],
+            use_opusclip   = False,
+            status         = "pending",
+            upload_results = {"format": "short", "parent_id": item.id},
+            clipped_urls   = [],
+        )
+        db.session.add(short_item)
+        db.session.commit()
         if accounts:
-            import threading as _threading
             _threading.Thread(
-                target=_run_job,
-                args=(item.id, accounts, False),
-                kwargs={"content_type": "kids_video"},
-                daemon=True,
+                target=_run_job, args=(short_item.id, accounts, False),
+                kwargs={"content_type": "kids_short"}, daemon=True,
             ).start()
 
-    print(f"[callback] Lumi episode done: '{title}'")
+    print(f"[callback] Lumi done: '{title}' — full + {'short' if shorts_url else 'no short'} + {'thumb' if thumbnail_url else 'no thumb'}")
     return jsonify({"ok": True})
 
 

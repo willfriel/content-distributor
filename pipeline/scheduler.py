@@ -61,6 +61,51 @@ def _job_generate_lumi_story():
     from pipeline.lumi_tales import generate_and_store
     generate_and_store(_app)
 
+def _job_lumi_build():
+    """Generate a fresh Lumi episode concept then dispatch to GitHub Actions."""
+    import os
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        print("[lumi-scheduler] ANTHROPIC_API_KEY not set")
+        return
+
+    # Guard: skip if an episode is already building
+    with _app.app_context():
+        from models import LumiStory
+        in_flight = LumiStory.query.filter(
+            LumiStory.status.in_(["generating", "dispatched"])
+        ).first()
+        if in_flight:
+            print(f"[lumi-scheduler] Skipping — episode #{in_flight.id} already in flight")
+            return
+
+    try:
+        import anthropic, json
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            messages=[{"role": "user", "content":
+                "Give me ONE fresh Lumi Tales kids episode idea. "
+                "Return only valid JSON: {\"title\": \"...\", \"moral\": \"...\"} "
+                "Title: 4-6 words, catchy. Moral: one simple sentence for toddlers. "
+                "No explanation, just JSON."
+            }],
+        )
+        raw = msg.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1].lstrip("json").strip()
+        concept = json.loads(raw)
+        title = concept["title"]
+        moral = concept["moral"]
+    except Exception as e:
+        print(f"[lumi-scheduler] Concept generation failed: {e}")
+        return
+
+    from integrations.lumi_builder import trigger_episode
+    trigger_episode(title, moral, _app)
+    print(f"[lumi-scheduler] Dispatched: '{title}'")
+
 # Long-form wrappers
 def _job_longform_trading():    run_longform_for_niche("trading",    _app)
 def _job_longform_fitness():    run_longform_for_niche("fitness",    _app)
@@ -480,6 +525,19 @@ def init_scheduler(app):
         hour               = 8,
         minute             = 0,
         id                 = "lumi_generate",
+        replace_existing   = True,
+        misfire_grace_time = 3600,
+    )
+
+    # Build a full Lumi episode (GitHub Actions) Mon/Wed/Fri at 10am UTC
+    # GitHub produces video + Short + thumbnail, Render posts to YouTube automatically
+    _scheduler.add_job(
+        func               = _job_lumi_build,
+        trigger            = "cron",
+        day_of_week        = "mon,wed,fri",
+        hour               = 10,
+        minute             = 0,
+        id                 = "lumi_build",
         replace_existing   = True,
         misfire_grace_time = 3600,
     )
