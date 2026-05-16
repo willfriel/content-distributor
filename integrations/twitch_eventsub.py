@@ -18,6 +18,9 @@ _EVENTSUB_URL = f"{_BASE}/eventsub/subscriptions"
 # streamer_login -> ISO stream start time (set on stream.online, cleared on post)
 _stream_start_times: dict[str, str] = {}
 
+# streamer_login -> UTC timestamp of last offline dispatch (dedup repeated webhook retries)
+_last_offline: dict[str, float] = {}
+
 # Only one video processing job at a time — Render Starter plan has 512MB RAM
 _process_lock = threading.Semaphore(1)
 
@@ -117,6 +120,15 @@ def handle_online(event: dict):
 
 def handle_offline(event: dict, app):
     login = event.get("broadcaster_user_login", "").lower()
+
+    # Cooldown: ignore duplicate offline events for the same streamer within 30 min
+    # (Twitch retries webhooks when our server is slow/crashing — this prevents mass re-dispatch)
+    now = time.time()
+    if now - _last_offline.get(login, 0) < 1800:
+        print(f"[eventsub] 🔴 {login} offline ignored — cooldown active")
+        return
+    _last_offline[login] = now
+
     started_at = _stream_start_times.get(login)
     print(f"[eventsub] 🔴 {login} went OFFLINE — collecting clips in 5 min")
 
@@ -434,7 +446,7 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
 
     with app.app_context():
         from models import db, Niche, SocialAccount, PipelineRun
-        from datetime import datetime
+        from datetime import datetime, timedelta
 
         niche_obj = Niche.query.filter_by(name="twitch", is_active=True).first()
         if not niche_obj:
@@ -446,9 +458,19 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
             print("[eventsub] No active twitch accounts")
             return
 
+        # Deduplication guard — never dispatch the same clip twice within 24 hours
+        clip_note = f"clip:{clip_id}"
+        already   = PipelineRun.query.filter(
+            PipelineRun.note       == clip_note,
+            PipelineRun.started_at >= datetime.utcnow() - timedelta(hours=24),
+        ).first()
+        if already:
+            print(f"[eventsub] Skipping {clip_id} — already dispatched (run #{already.id})")
+            return
+
         run = PipelineRun(
             niche="twitch", status="dispatched",
-            started_at=datetime.utcnow(), note=f"eventsub: {streamer}",
+            started_at=datetime.utcnow(), note=clip_note,
         )
         db.session.add(run)
         db.session.commit()
@@ -467,5 +489,5 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
             print(f"[eventsub] ✅ Dispatched {streamer}/{clip_id} to GitHub Actions (run_id={run.id})")
         else:
             run.status = "failed"
-            run.note   = "GitHub dispatch failed"
+            run.note   = f"dispatch failed for {clip_note}"
             db.session.commit()
