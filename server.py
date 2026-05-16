@@ -1963,11 +1963,21 @@ def list_lumi_stories():
 
 @app.route("/api/lumi/generate", methods=["POST"])
 def generate_lumi_story():
-    """Manually trigger a story generation."""
-    from pipeline.lumi_tales import generate_and_store
-    import threading
-    threading.Thread(target=generate_and_store, args=[app], daemon=True).start()
-    return jsonify({"status": "generating"})
+    """Trigger a Lumi episode build via GitHub Actions. Body: {title, moral} (optional)."""
+    data  = request.get_json(force=True) or {}
+    title = (data.get("title") or "").strip()
+    moral = (data.get("moral") or "").strip()
+    if title and moral:
+        from integrations.lumi_builder import trigger_episode
+        import threading
+        threading.Thread(target=trigger_episode, args=[title, moral, app], daemon=True).start()
+        return jsonify({"status": "dispatched", "title": title, "moral": moral})
+    else:
+        # No title/moral provided — generate a random story script only (legacy behaviour)
+        from pipeline.lumi_tales import generate_and_store
+        import threading
+        threading.Thread(target=generate_and_store, args=[app], daemon=True).start()
+        return jsonify({"status": "generating"})
 
 
 @app.route("/api/lumi/stories/<int:story_id>", methods=["GET"])
