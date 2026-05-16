@@ -2205,6 +2205,31 @@ def debug_clip_fetch(streamer):
 
 
 # ---------------------------------------------------------------------------
+# Lumi Tales episode builder
+# ---------------------------------------------------------------------------
+
+@app.route("/api/lumi/generate", methods=["POST"])
+def lumi_generate():
+    """Trigger a full Lumi Tales episode build (async). Body: {title, moral}"""
+    data  = request.get_json(force=True) or {}
+    title = (data.get("title") or "").strip()
+    moral = (data.get("moral") or "").strip()
+    if not title or not moral:
+        return jsonify({"error": "title and moral are required"}), 400
+    from integrations.lumi_builder import trigger_episode
+    trigger_episode(title, moral, app)
+    return jsonify({"status": "building", "title": title, "moral": moral}), 202
+
+
+@app.route("/api/lumi/episodes", methods=["GET"])
+def lumi_episodes():
+    """List all Lumi Tales stories with their status."""
+    from models import LumiStory
+    stories = LumiStory.query.order_by(LumiStory.generated_at.desc()).limit(50).all()
+    return jsonify([s.to_dict() for s in stories])
+
+
+# ---------------------------------------------------------------------------
 # Twitch EventSub webhook
 # ---------------------------------------------------------------------------
 

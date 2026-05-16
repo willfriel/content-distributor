@@ -17,3 +17,4 @@ yt-dlp>=2025.1.15
 elevenlabs==2.47.0
 instaloader==4.13.1
 openai>=1.30.0
+Pillow>=10.0.0
