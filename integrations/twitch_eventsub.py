@@ -272,10 +272,10 @@ def _collect_and_post(login: str, started_at: str | None, app, all_time_only: bo
             print(f"[eventsub] No clips found for {login}")
             return
 
-        print(f"[eventsub] Posting {len(selected)} clip(s) for {login}")
+        print(f"[eventsub] Dispatching {len(selected)} clip(s) for {login}")
         for i, clip in enumerate(selected):
             if i > 0:
-                time.sleep(30)  # sequential — avoid simultaneous ffmpeg processes
+                time.sleep(2)  # small delay to avoid GitHub API burst limit
             print(f"[eventsub]   → '{clip['title']}' ({clip['view_count']} views)")
             _post_clip(clip["id"], clip.get("title", f"{login} clip"), login, app)
 
@@ -429,16 +429,12 @@ def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = Non
 
 
 def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
-    """Download clip via GQL, format to vertical 9:16, post to all twitch niche accounts."""
-    from pathlib import Path
-    from pipeline.captions import generate_captions
+    """Dispatch clip processing to GitHub Actions (download + ffmpeg runs on 7 GB runner)."""
+    from integrations.github_actions import trigger_workflow
 
     with app.app_context():
-        from models import db, Niche, SocialAccount, PipelineRun, ContentQueue
-        from server  import _run_job
+        from models import db, Niche, SocialAccount, PipelineRun
         from datetime import datetime
-
-        print(f"[eventsub] Posting clip from {streamer}: {clip_id}")
 
         niche_obj = Niche.query.filter_by(name="twitch", is_active=True).first()
         if not niche_obj:
@@ -450,73 +446,26 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
             print("[eventsub] No active twitch accounts")
             return
 
-        run = PipelineRun(niche="twitch", status="running", started_at=datetime.utcnow(),
-                          note=f"eventsub: {streamer}")
+        run = PipelineRun(
+            niche="twitch", status="dispatched",
+            started_at=datetime.utcnow(), note=f"eventsub: {streamer}",
+        )
         db.session.add(run)
         db.session.commit()
 
-        try:
-            video_path = _download_twitch_clip(clip_id)
-            if not video_path:
-                run.status = "failed"; run.note = f"eventsub download failed: {clip_id}"
-                db.session.commit(); return
+        base_url = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
 
-            static_dir = Path(app.root_path) / "static" / "videos"
-            static_dir.mkdir(parents=True, exist_ok=True)
-            raw_dest = static_dir / f"pipeline_twitch_event_{run.id}_raw.mp4"
-            import shutil
-            shutil.move(video_path, str(raw_dest))
+        ok = trigger_workflow("twitch_clip.yml", {
+            "clip_id":      clip_id,
+            "clip_title":   clip_title[:200],
+            "streamer":     streamer,
+            "run_id":       str(run.id),
+            "callback_url": base_url,
+        })
 
-            print(f"[eventsub] Waiting for process slot...")
-            with _process_lock:
-                print(f"[eventsub] Processing slot acquired for {clip_id}")
-
-                # Transcribe audio for captions
-                srt = _transcribe_clip(str(raw_dest))
-
-                # Generate hook and format to 9:16 vertical with burned-in captions
-                hook         = _generate_hook(streamer, clip_title)
-                cta          = f"To keep watching {streamer} clips follow for more!"
-                fmt_path, bg = _format_vertical(str(raw_dest), hook, cta, srt=srt)
-
-                # Move formatted file to final destination
-                dest = static_dir / f"pipeline_twitch_event_{run.id}.mp4"
-                shutil.move(fmt_path, str(dest))
-                if raw_dest.exists():
-                    raw_dest.unlink(missing_ok=True)
-
-            base_url  = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
-            video_url = f"{base_url}/static/videos/{dest.name}"
-            title     = f"{streamer}: {clip_title}"[:100]
-
-            cap_a, cap_b = generate_captions("twitch", title)
-
-            item = ContentQueue(
-                niche_id       = niche_obj.id,
-                video_url      = video_url,
-                title          = title,
-                description    = cap_a,
-                platforms      = list({a.platform for a in accounts}),
-                use_opusclip   = False,
-                status         = "pending",
-                upload_results = {"bg_style": bg, "hook": hook},
-                clipped_urls   = [],
-            )
-            db.session.add(item)
+        if ok:
+            print(f"[eventsub] ✅ Dispatched {streamer}/{clip_id} to GitHub Actions (run_id={run.id})")
+        else:
+            run.status = "failed"
+            run.note   = "GitHub dispatch failed"
             db.session.commit()
-
-            caption_variants = [cap_a, cap_b]
-            _run_job(
-                item.id, accounts, False,
-                content_type="twitch_clip",
-                account_caps={a.id: caption_variants[i % 2] for i, a in enumerate(accounts)},
-            )
-
-            run.status = "completed"
-            db.session.commit()
-            print(f"[eventsub] ✅ Posted {streamer} clip ({bg} bg) to {len(accounts)} accounts")
-
-        except Exception as e:
-            run.status = "failed"; run.note = str(e)
-            db.session.commit()
-            print(f"[eventsub] Post failed: {e}")

@@ -55,6 +55,12 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: GITHUB_ACTIONS_TOKEN
+        sync: false        # fine-grained PAT with Actions: write permission
+      - key: GITHUB_REPO
+        value: willfriel/content-distributor
+      - key: CALLBACK_SECRET
+        sync: false        # shared secret between Render and GitHub Actions runners
 
 databases:
   - name: content-distributor-db

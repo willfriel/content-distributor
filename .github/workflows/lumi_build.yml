@@ -1,0 +1,66 @@
+name: Build Lumi Episode
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: "Episode title"
+        required: true
+        type: string
+      moral:
+        description: "Episode lesson / moral"
+        required: true
+        type: string
+      run_id:
+        description: "PipelineRun ID on Render (for callback)"
+        required: true
+        type: string
+      story_id:
+        description: "LumiStory ID on Render (for callback)"
+        required: true
+        type: string
+      callback_url:
+        description: "Render base URL"
+        required: true
+        type: string
+
+jobs:
+  build-episode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg libsm6 libxext6 libgl1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build episode
+        env:
+          # Job parameters
+          LUMI_TITLE:   ${{ inputs.title }}
+          LUMI_MORAL:   ${{ inputs.moral }}
+          RUN_ID:       ${{ inputs.run_id }}
+          STORY_ID:     ${{ inputs.story_id }}
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          # API keys (stored in repo / org secrets)
+          ANTHROPIC_API_KEY:       ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY:          ${{ secrets.OPENAI_API_KEY }}
+          ELEVENLABS_API_KEY:      ${{ secrets.ELEVENLABS_API_KEY }}
+          LUMI_VOICE_ID:           ${{ secrets.LUMI_VOICE_ID }}
+          LUMI_MOM_VOICE_ID:       ${{ secrets.LUMI_MOM_VOICE_ID }}
+          LUMI_NARRATOR_VOICE_ID:  ${{ secrets.LUMI_NARRATOR_VOICE_ID }}
+          CALLBACK_SECRET:         ${{ secrets.CALLBACK_SECRET }}
+        run: python scripts/lumi_runner.py

@@ -1,0 +1,65 @@
+name: Process Twitch Clip
+
+on:
+  workflow_dispatch:
+    inputs:
+      clip_id:
+        description: "Twitch clip ID"
+        required: true
+        type: string
+      clip_title:
+        description: "Clip title"
+        required: true
+        type: string
+      streamer:
+        description: "Streamer login name"
+        required: true
+        type: string
+      run_id:
+        description: "PipelineRun ID on Render (for callback)"
+        required: true
+        type: string
+      callback_url:
+        description: "Render base URL"
+        required: true
+        type: string
+
+jobs:
+  process-clip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Process clip
+        env:
+          # Job parameters
+          CLIP_ID:      ${{ inputs.clip_id }}
+          CLIP_TITLE:   ${{ inputs.clip_title }}
+          STREAMER:     ${{ inputs.streamer }}
+          RUN_ID:       ${{ inputs.run_id }}
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          # API keys (stored in repo / org secrets)
+          TWITCH_CLIENT_ID:     ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
+          ELEVENLABS_API_KEY:   ${{ secrets.ELEVENLABS_API_KEY }}
+          CALLBACK_SECRET:      ${{ secrets.CALLBACK_SECRET }}
+        run: python scripts/twitch_runner.py

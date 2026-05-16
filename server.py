@@ -2205,6 +2205,173 @@ def debug_clip_fetch(streamer):
 
 
 # ---------------------------------------------------------------------------
+# GitHub Actions callbacks (called by runners after processing)
+# ---------------------------------------------------------------------------
+
+def _verify_callback_secret():
+    secret = os.environ.get("CALLBACK_SECRET", "")
+    auth   = request.headers.get("Authorization", "")
+    return bool(secret) and auth == f"Bearer {secret}"
+
+
+@app.route("/api/internal/video-upload", methods=["POST"])
+def internal_video_upload():
+    """Receive a processed MP4 from GitHub Actions, save to static/videos/."""
+    if not _verify_callback_secret():
+        return jsonify({"error": "unauthorized"}), 401
+    if "video" not in request.files:
+        return jsonify({"error": "no video file"}), 400
+
+    video_file = request.files["video"]
+    video_type = request.form.get("type", "misc")
+    run_id     = request.form.get("run_id", "0")
+
+    from pathlib import Path as _Path
+    save_dir = _Path(app.root_path) / "static" / "videos" / video_type
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    filename  = f"{video_type}_{run_id}.mp4"
+    save_path = save_dir / filename
+    video_file.save(str(save_path))
+
+    base_url  = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
+    video_url = f"{base_url}/static/videos/{video_type}/{filename}"
+    print(f"[callback] Video saved: {video_url} ({save_path.stat().st_size // 1024} KB)")
+    return jsonify({"video_url": video_url})
+
+
+@app.route("/api/internal/lumi-done", methods=["POST"])
+def internal_lumi_done():
+    """GitHub Actions calls this when a Lumi episode is finished."""
+    if not _verify_callback_secret():
+        return jsonify({"error": "unauthorized"}), 401
+
+    data     = request.get_json(force=True) or {}
+    run_id   = int(data.get("run_id") or 0)
+    story_id = int(data.get("story_id") or 0)
+    status   = data.get("status", "failed")
+
+    run   = PipelineRun.query.get(run_id)
+    story = LumiStory.query.get(story_id) if story_id else None
+
+    if status != "success":
+        note = data.get("note", "github runner failed")
+        if run:   run.status = "failed"; run.note = note
+        if story: story.status = "failed"
+        db.session.commit()
+        return jsonify({"ok": True})
+
+    video_url = data.get("video_url", "")
+    title     = data.get("title", "")
+    moral     = data.get("moral", "")
+    lesson    = data.get("lesson_line", "")
+
+    niche_obj = Niche.query.filter_by(name="kids", is_active=True).first()
+    yt_desc   = (
+        f"{title}\n\n{lesson}\n\n"
+        "#LumiTales #KidsTV #LearnWithLumi #EducationalKids #Toddlers"
+    )
+
+    item = ContentQueue(
+        niche_id       = niche_obj.id if niche_obj else None,
+        video_url      = video_url,
+        title          = title[:100],
+        description    = yt_desc,
+        platforms      = ["youtube"],
+        use_opusclip   = False,
+        status         = "pending",
+        upload_results = {"moral": moral, "scenes": data.get("scenes_count", 0)},
+        clipped_urls   = [],
+    )
+    db.session.add(item)
+    db.session.commit()
+
+    if story: story.status = "ready"; story.content_id = item.id
+    if run:   run.status   = "completed"
+    db.session.commit()
+
+    if niche_obj:
+        accounts = SocialAccount.query.filter_by(niche_id=niche_obj.id, is_active=True).all()
+        if accounts:
+            import threading as _threading
+            _threading.Thread(
+                target=_run_job,
+                args=(item.id, accounts, False),
+                kwargs={"content_type": "kids_video"},
+                daemon=True,
+            ).start()
+
+    print(f"[callback] Lumi episode done: '{title}'")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/internal/clip-done", methods=["POST"])
+def internal_clip_done():
+    """GitHub Actions calls this when a Twitch clip is finished."""
+    if not _verify_callback_secret():
+        return jsonify({"error": "unauthorized"}), 401
+
+    data   = request.get_json(force=True) or {}
+    run_id = int(data.get("run_id") or 0)
+    status = data.get("status", "failed")
+
+    run = PipelineRun.query.get(run_id)
+
+    if status != "success":
+        note = data.get("note", "github runner failed")
+        if run: run.status = "failed"; run.note = note
+        db.session.commit()
+        return jsonify({"ok": True})
+
+    video_url = data.get("video_url", "")
+    streamer  = data.get("streamer", "")
+    title     = data.get("title", "")
+    hook      = data.get("hook", "")
+    bg_style  = data.get("bg_style", "black")
+
+    niche_obj = Niche.query.filter_by(name="twitch", is_active=True).first()
+    accounts  = SocialAccount.query.filter_by(
+        niche_id=niche_obj.id, is_active=True
+    ).all() if niche_obj else []
+
+    from pipeline.captions import generate_captions
+    cap_a, cap_b = generate_captions("twitch", title)
+
+    item = ContentQueue(
+        niche_id       = niche_obj.id if niche_obj else None,
+        video_url      = video_url,
+        title          = title[:100],
+        description    = cap_a,
+        platforms      = list({a.platform for a in accounts}),
+        use_opusclip   = False,
+        status         = "pending",
+        upload_results = {"bg_style": bg_style, "hook": hook},
+        clipped_urls   = [],
+    )
+    db.session.add(item)
+    db.session.commit()
+
+    if run: run.status = "completed"
+    db.session.commit()
+
+    if accounts:
+        caption_variants = [cap_a, cap_b]
+        import threading as _threading
+        _threading.Thread(
+            target=_run_job,
+            args=(item.id, accounts, False),
+            kwargs={
+                "content_type": "twitch_clip",
+                "account_caps": {a.id: caption_variants[i % 2] for i, a in enumerate(accounts)},
+            },
+            daemon=True,
+        ).start()
+
+    print(f"[callback] Twitch clip done: '{title}' ({bg_style} bg)")
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
 # Lumi Tales episode builder
 # ---------------------------------------------------------------------------
 

@@ -331,24 +331,25 @@ def assemble_episode(clip_paths: list, output_path: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 6. Full pipeline
+# 6. GitHub Actions dispatch (replaces local processing)
 # ---------------------------------------------------------------------------
 
 def build_episode(title: str, moral: str, app) -> bool:
     """
-    Full Lumi Tales pipeline:
-      script -> images + audio (parallel per scene) -> clips -> final video -> DB + upload queue
+    Create DB records then dispatch a GitHub Actions workflow to do the heavy work.
+    The runner (scripts/lumi_runner.py) handles DALL-E, ElevenLabs, ffmpeg, and
+    moviepy on a 7 GB GitHub-hosted machine, then calls back to Render when done.
     """
+    from integrations.github_actions import trigger_workflow
+
     with app.app_context():
         from datetime import datetime
-        from models import db, LumiStory, Niche, SocialAccount, ContentQueue, PipelineRun
+        from models import db, LumiStory, PipelineRun
 
-        print(f"[lumi] ▶ Building episode: '{title}'")
-
-        niche_obj = Niche.query.filter_by(name="kids", is_active=True).first()
+        print(f"[lumi] Dispatching episode build: '{title}'")
 
         run = PipelineRun(
-            niche="kids", status="running",
+            niche="kids", status="dispatched",
             started_at=datetime.utcnow(), note=f"lumi: {title}",
         )
         db.session.add(run)
@@ -356,141 +357,30 @@ def build_episode(title: str, moral: str, app) -> bool:
 
         story = LumiStory(
             character="Lumi", style="A",
-            title=title, moral=moral, status="draft",
+            title=title, moral=moral, status="generating",
         )
         db.session.add(story)
         db.session.commit()
 
-        work_dir = Path(tempfile.mkdtemp(prefix="lumi_"))
-        try:
-            # --- Script ---
-            print("[lumi] Generating script...")
-            script = generate_script(title, moral)
-            if not script or not script.get("scenes"):
-                _fail(run, story, db, "script generation failed")
-                return False
+        base_url = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
 
-            scenes = script["scenes"]
-            story.script = scenes
+        ok = trigger_workflow("lumi_build.yml", {
+            "title":        title,
+            "moral":        moral,
+            "run_id":       str(run.id),
+            "story_id":     str(story.id),
+            "callback_url": base_url,
+        })
+
+        if not ok:
+            run.status   = "failed"
+            run.note     = "GitHub dispatch failed"
+            story.status = "failed"
             db.session.commit()
-            print(f"[lumi] {len(scenes)} scenes planned")
-
-            # --- Images + voiceovers (parallel per scene, DALL-E rate-limited) ---
-            clip_paths = []
-            for scene in scenes:
-                sid        = scene["id"]
-                dialogue   = scene.get("dialogue", "")
-                speaker    = scene.get("speaker", "narrator")
-                motion     = scene.get("motion", "zoom_in")
-                img_prompt = scene.get("image_prompt", "")
-
-                img_path   = work_dir / f"scene_{sid:02d}.png"
-                audio_path = work_dir / f"scene_{sid:02d}.mp3"
-                clip_path  = work_dir / f"clip_{sid:02d}.mp4"
-
-                # Kick off DALL-E and ElevenLabs simultaneously
-                results: dict = {}
-
-                def _gen_img(prompt=img_prompt, s_id=sid, out_dir=work_dir, res=results):
-                    res["img"] = generate_scene_image(prompt, s_id, out_dir)
-
-                def _gen_audio(text=dialogue, spk=speaker, out=audio_path, res=results):
-                    res["audio"] = generate_voiceover(text, spk, out)
-
-                t1 = threading.Thread(target=_gen_img,   daemon=True)
-                t2 = threading.Thread(target=_gen_audio, daemon=True)
-                t1.start(); t2.start()
-                t1.join(); t2.join()
-
-                if results.get("img") is None:
-                    print(f"[lumi] Scene {sid}: image failed — using placeholder")
-                    _make_placeholder_image(img_path, sid)
-                if not results.get("audio", False):
-                    print(f"[lumi] Scene {sid}: audio failed — skipping scene")
-                    time.sleep(12)
-                    continue
-
-                with _process_lock:
-                    ok = make_scene_clip(img_path, audio_path, motion, clip_path)
-
-                if ok:
-                    clip_paths.append(clip_path)
-                else:
-                    print(f"[lumi] Scene {sid}: clip generation failed — skipping")
-
-                # DALL-E standard tier: 5 requests/min — stay safely under
-                time.sleep(12)
-
-            if not clip_paths:
-                _fail(run, story, db, "no scene clips generated")
-                return False
-
-            print(f"[lumi] {len(clip_paths)}/{len(scenes)} clips ready — assembling...")
-
-            # --- Final assembly ---
-            static_dir = Path(app.root_path) / "static" / "videos" / "lumi"
-            static_dir.mkdir(parents=True, exist_ok=True)
-            out_name = f"lumi_ep_{run.id}.mp4"
-            out_path = static_dir / out_name
-
-            with _process_lock:
-                ok = assemble_episode(clip_paths, out_path)
-
-            if not ok:
-                _fail(run, story, db, "assembly failed")
-                return False
-
-            # --- Queue for upload ---
-            base_url  = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
-            video_url = f"{base_url}/static/videos/lumi/{out_name}"
-            lesson    = script.get("lesson_line", "")
-            yt_desc   = (
-                f"{title}\n\n{lesson}\n\n"
-                "#LumiTales #KidsTV #LearnWithLumi #EducationalKids #Toddlers"
-            )
-
-            item = ContentQueue(
-                niche_id       = niche_obj.id if niche_obj else None,
-                video_url      = video_url,
-                title          = title[:100],
-                description    = yt_desc,
-                platforms      = ["youtube"],
-                use_opusclip   = False,
-                status         = "pending",
-                upload_results = {"moral": moral, "scenes": len(scenes), "clips_used": len(clip_paths)},
-                clipped_urls   = [],
-            )
-            db.session.add(item)
-            db.session.commit()
-
-            story.status     = "ready"
-            story.content_id = item.id
-            run.status       = "completed"
-            db.session.commit()
-
-            # Trigger upload if accounts are configured
-            if niche_obj:
-                accounts = SocialAccount.query.filter_by(niche_id=niche_obj.id, is_active=True).all()
-                if accounts:
-                    from server import _run_job
-                    _run_job(item.id, accounts, False, content_type="kids_video")
-
-            print(f"[lumi] ✅ Episode complete — {len(clip_paths)} scenes, video: {out_name}")
-            return True
-
-        except Exception as e:
-            _fail(run, story, db, str(e))
-            print(f"[lumi] Build failed: {e}")
             return False
-        finally:
-            shutil.rmtree(work_dir, ignore_errors=True)
 
-
-def _fail(run, story, db, note: str):
-    run.status   = "failed"
-    run.note     = note
-    story.status = "failed"
-    db.session.commit()
+        print(f"[lumi] ✅ Dispatched to GitHub Actions (run_id={run.id}, story_id={story.id})")
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +388,7 @@ def _fail(run, story, db, note: str):
 # ---------------------------------------------------------------------------
 
 def trigger_episode(title: str, moral: str, app):
-    """Start episode build in a background thread. Returns immediately."""
+    """Dispatch a Lumi episode build in a background thread. Returns immediately."""
     t = threading.Thread(target=build_episode, args=(title, moral, app), daemon=True)
     t.start()
     return t
