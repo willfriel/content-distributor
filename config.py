@@ -5,6 +5,14 @@ from cryptography.fernet import Fernet
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-in-prod")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # Keep connection pool small to stay within Render Starter 512MB RAM.
+    # pool_pre_ping recycles dead connections after server restarts.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_size":    3,
+        "max_overflow": 5,
+        "pool_timeout": 20,
+        "pool_pre_ping": True,
+    }
 
     _raw_db_url = os.environ.get("DATABASE_URL", "sqlite:///content_distributor.db")
     if _raw_db_url.startswith("postgres://"):

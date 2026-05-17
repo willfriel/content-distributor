@@ -287,7 +287,7 @@ def _collect_and_post(login: str, started_at: str | None, app, all_time_only: bo
         print(f"[eventsub] Dispatching {len(selected)} clip(s) for {login}")
         for i, clip in enumerate(selected):
             if i > 0:
-                time.sleep(2)  # small delay to avoid GitHub API burst limit
+                time.sleep(10)  # space out DB writes and GitHub API calls
             print(f"[eventsub]   → '{clip['title']}' ({clip['view_count']} views)")
             _post_clip(clip["id"], clip.get("title", f"{login} clip"), login, app)
 
@@ -492,14 +492,16 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
             print("[eventsub] No active twitch accounts")
             return
 
-        # Deduplication guard — never dispatch the same clip twice within 24 hours
+        # Deduplication guard — never dispatch the same clip twice within 24 hours.
+        # Search by CONTAINS so we still catch runs whose status changed to "failed"
+        # (failed runs overwrite the note but always keep the clip_id in it).
         clip_note = f"clip:{clip_id}"
         already   = PipelineRun.query.filter(
-            PipelineRun.note       == clip_note,
-            PipelineRun.started_at >= datetime.utcnow() - timedelta(hours=2),
+            PipelineRun.note.contains(clip_note),
+            PipelineRun.started_at >= datetime.utcnow() - timedelta(hours=24),
         ).first()
         if already:
-            print(f"[eventsub] Skipping {clip_id} — already dispatched (run #{already.id})")
+            print(f"[eventsub] Skipping {clip_id} — already seen (run #{already.id}, status={already.status})")
             return
 
         run = PipelineRun(
@@ -522,6 +524,7 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
         if ok:
             print(f"[eventsub] ✅ Dispatched {streamer}/{clip_id} to GitHub Actions (run_id={run.id})")
         else:
+            # Keep clip_note in the note so the dedup above still catches it on retries
             run.status = "failed"
-            run.note   = f"dispatch failed for {clip_note}"
+            run.note   = f"dispatch failed | {clip_note}"
             db.session.commit()
