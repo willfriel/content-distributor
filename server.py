@@ -1916,7 +1916,11 @@ def mirror_welcome_to_youtube(ig_account_id, yt_account_id):
         typed = [p for p in posts if p.get("media_type") == media_type]
         return min(typed, key=lambda p: p.get("timestamp", "")) if typed else None
 
-    welcome = _pick(all_posts, "VIDEO") or _pick(all_posts, "IMAGE")
+    force_type = (request.args.get("force_type") or "").upper()  # IMAGE or VIDEO
+    if force_type in ("IMAGE", "VIDEO"):
+        welcome = _pick(all_posts, force_type)
+    else:
+        welcome = _pick(all_posts, "VIDEO") or _pick(all_posts, "IMAGE")
 
     if not welcome:
         return _error(f"No posts found on {ig_account.account_name}")
