@@ -1866,7 +1866,8 @@ def mirror_welcome_to_youtube(ig_account_id, yt_account_id):
     """
     Find the welcome post on an Instagram account and upload it to YouTube.
     Searches for: welcome video → oldest video → welcome image → oldest image.
-    Images are converted to 15-second portrait MP4 via ffmpeg before uploading.
+    Images are converted to a 15-second portrait MP4 via ffmpeg.
+    Runs async — returns 202 immediately to avoid blocking the server.
     """
     ig_account = SocialAccount.query.get_or_404(ig_account_id)
     yt_account = SocialAccount.query.get_or_404(yt_account_id)
@@ -1876,119 +1877,134 @@ def mirror_welcome_to_youtube(ig_account_id, yt_account_id):
     if yt_account.platform != "youtube":
         return _error("yt_account_id must be a YouTube account")
 
-    ig_creds = ig_account.get_credentials()
-    ig_token = ig_creds.get("access_token")
-    ig_id    = ig_creds.get("instagram_user_id")
-    if not ig_token or not ig_id:
-        return _error("Missing Instagram credentials")
+    force_type = (request.args.get("force_type") or "").upper()
 
-    import requests as _req, subprocess, tempfile, os
+    def _do_mirror():
+        import requests as _req, subprocess, tempfile, os, shutil, time
+        with app.app_context():
+            ig_acc = SocialAccount.query.get(ig_account_id)
+            yt_acc = SocialAccount.query.get(yt_account_id)
+            if not ig_acc or not yt_acc:
+                return
 
-    # Paginate through all IG posts to find welcome post
-    all_posts = []
-    after = None
-    for _ in range(20):  # max 20 pages of 50 = 1000 posts
-        params = {
-            "fields":       "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink",
-            "limit":        50,
-            "access_token": ig_token,
-        }
-        if after:
-            params["after"] = after
-        r = _req.get(
-            f"https://graph.instagram.com/v21.0/{ig_id}/media",
-            params=params, timeout=20,
-        )
-        r.raise_for_status()
-        data   = r.json()
-        batch  = data.get("data", [])
-        all_posts.extend(batch)
-        paging = data.get("paging", {})
-        after  = paging.get("cursors", {}).get("after")
-        if not paging.get("next") or not after or not batch:
-            break
+            ig_creds = ig_acc.get_credentials()
+            ig_token = ig_creds.get("access_token")
+            ig_id    = ig_creds.get("instagram_user_id")
+            if not ig_token or not ig_id:
+                print(f"[mirror] Missing IG credentials for account {ig_account_id}")
+                return
 
-    def _pick(posts, media_type):
-        # welcome in caption first, then oldest
-        for p in posts:
-            if "welcome" in (p.get("caption") or "").lower() and p.get("media_type") == media_type:
-                return p
-        typed = [p for p in posts if p.get("media_type") == media_type]
-        return min(typed, key=lambda p: p.get("timestamp", "")) if typed else None
+            # Paginate through all IG posts
+            all_posts = []
+            after = None
+            for _ in range(20):
+                params = {
+                    "fields":       "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink",
+                    "limit":        50,
+                    "access_token": ig_token,
+                }
+                if after:
+                    params["after"] = after
+                r = _req.get(
+                    f"https://graph.instagram.com/v21.0/{ig_id}/media",
+                    params=params, timeout=20,
+                )
+                r.raise_for_status()
+                data   = r.json()
+                batch  = data.get("data", [])
+                all_posts.extend(batch)
+                paging = data.get("paging", {})
+                after  = paging.get("cursors", {}).get("after")
+                if not paging.get("next") or not after or not batch:
+                    break
 
-    force_type = (request.args.get("force_type") or "").upper()  # IMAGE or VIDEO
-    if force_type in ("IMAGE", "VIDEO"):
-        welcome = _pick(all_posts, force_type)
-    else:
-        welcome = _pick(all_posts, "VIDEO") or _pick(all_posts, "IMAGE")
+            def _pick(posts, media_type):
+                for p in posts:
+                    if "welcome" in (p.get("caption") or "").lower() and p.get("media_type") == media_type:
+                        return p
+                typed = [p for p in posts if p.get("media_type") == media_type]
+                return min(typed, key=lambda p: p.get("timestamp", "")) if typed else None
 
-    if not welcome:
-        return _error(f"No posts found on {ig_account.account_name}")
+            if force_type in ("IMAGE", "VIDEO"):
+                welcome = _pick(all_posts, force_type)
+            else:
+                welcome = _pick(all_posts, "VIDEO") or _pick(all_posts, "IMAGE")
 
-    media_url   = welcome.get("media_url")
-    media_type  = welcome.get("media_type")
-    if not media_url:
-        return _error("Welcome post has no media_url")
+            if not welcome:
+                print(f"[mirror] No posts found on {ig_acc.account_name}")
+                return
 
-    caption = (welcome.get("caption") or f"Welcome to {yt_account.account_name}!")
-    title   = caption.split("\n")[0][:90].strip() or f"Welcome to {yt_account.account_name}!"
+            media_url  = welcome.get("media_url")
+            media_type = welcome.get("media_type")
+            if not media_url:
+                print(f"[mirror] No media_url on {ig_acc.account_name} post {welcome.get('id')}")
+                return
 
-    from integrations import youtube as yt_integration
-    yt_creds = yt_account.get_credentials()
+            caption = (welcome.get("caption") or f"Welcome to {yt_acc.account_name}!")
+            title   = caption.split("\n")[0][:90].strip() or f"Welcome to {yt_acc.account_name}!"
 
-    # If it's an image, convert to a 15-second portrait video first
-    tmp_video_path = None
-    try:
-        if media_type == "IMAGE":
-            img_data = _req.get(media_url, timeout=30)
-            img_data.raise_for_status()
-            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as img_f:
-                img_f.write(img_data.content)
-                img_path = img_f.name
+            from integrations import youtube as yt_integration
+            yt_creds = yt_acc.get_credentials()
 
-            tmp_video_path = img_path.replace(".jpg", "_welcome.mp4")
-            subprocess.run([
-                "ffmpeg", "-y",
-                "-loop", "1", "-i", img_path,
-                "-vf", (
-                    "scale=1080:1920:force_original_aspect_ratio=decrease,"
-                    "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black"
-                ),
-                "-c:v", "libx264", "-preset", "fast", "-t", "15",
-                "-pix_fmt", "yuv420p", "-r", "30", tmp_video_path,
-            ], check=True, capture_output=True, timeout=60)
-            os.unlink(img_path)
-
-            # Upload from local file path — wrap in a temp URL via static serve
-            import shutil
-            dest = os.path.join("static", "videos", f"welcome_{ig_account_id}_{yt_account_id}.mp4")
-            shutil.copy(tmp_video_path, dest)
-            base_url = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
-            upload_url = f"{base_url}/static/videos/welcome_{ig_account_id}_{yt_account_id}.mp4"
-        else:
-            upload_url = media_url
-
-        result = yt_integration.upload_video(
-            yt_creds, upload_url, title, caption,
-            niche    = "everything",
-            is_short = True,
-        )
-        return jsonify({
-            "status":           "uploaded",
-            "ig_post_id":       welcome["id"],
-            "ig_post_time":     welcome.get("timestamp"),
-            "media_type":       media_type,
-            "youtube_url":      result.get("url"),
-            "youtube_video_id": result.get("video_id"),
-        })
-    except Exception as e:
-        return _error(f"YouTube upload failed: {e}")
-    finally:
-        if tmp_video_path and os.path.exists(tmp_video_path):
+            tmp_video_path = None
             try:
-                os.unlink(tmp_video_path)
-            except Exception:
-                pass
+                if media_type == "IMAGE":
+                    img_data = _req.get(media_url, timeout=30)
+                    img_data.raise_for_status()
+                    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as img_f:
+                        img_f.write(img_data.content)
+                        img_path = img_f.name
+
+                    tmp_video_path = img_path.replace(".jpg", "_welcome.mp4")
+                    subprocess.run([
+                        "ffmpeg", "-y",
+                        "-loop", "1", "-i", img_path,
+                        "-vf", (
+                            "scale=1080:1920:force_original_aspect_ratio=decrease,"
+                            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black"
+                        ),
+                        "-c:v", "libx264", "-preset", "fast", "-threads", "1",
+                        "-t", "15", "-pix_fmt", "yuv420p", "-r", "30", tmp_video_path,
+                    ], check=True, capture_output=True, timeout=90)
+                    os.unlink(img_path)
+
+                    dest = os.path.join("static", "videos", f"welcome_{ig_account_id}_{yt_account_id}.mp4")
+                    shutil.copy(tmp_video_path, dest)
+                    base_url   = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
+                    upload_url = f"{base_url}/static/videos/welcome_{ig_account_id}_{yt_account_id}.mp4"
+                else:
+                    upload_url = media_url
+
+                result = yt_integration.upload_video(
+                    yt_creds, upload_url, title, caption,
+                    niche    = "everything",
+                    is_short = True,
+                )
+                print(f"[mirror] ✅ {ig_acc.account_name} → {yt_acc.account_name}: {result.get('url')}")
+
+                # Clean up static copy after upload (give YouTube a minute to fetch it)
+                time.sleep(60)
+                static_copy = os.path.join("static", "videos", f"welcome_{ig_account_id}_{yt_account_id}.mp4")
+                if os.path.exists(static_copy):
+                    os.unlink(static_copy)
+
+            except Exception as e:
+                print(f"[mirror] ❌ {ig_acc.account_name} → {yt_acc.account_name}: {e}")
+            finally:
+                if tmp_video_path and os.path.exists(tmp_video_path):
+                    try:
+                        os.unlink(tmp_video_path)
+                    except Exception:
+                        pass
+
+    import threading
+    threading.Thread(target=_do_mirror, daemon=True).start()
+    return jsonify({
+        "status":       "queued",
+        "ig_account":   ig_account.account_name,
+        "yt_account":   yt_account.account_name,
+        "force_type":   force_type or "auto",
+    }), 202
 
 
 @app.route("/api/accounts/<int:account_id>", methods=["PATCH"])
