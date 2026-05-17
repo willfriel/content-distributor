@@ -1834,7 +1834,7 @@ def list_all_accounts():
 
 @app.route("/api/accounts/<int:account_id>/ig-media", methods=["GET"])
 def get_ig_media(account_id):
-    """Fetch recent media from an Instagram account via Graph API."""
+    """Fetch media from an Instagram account via Graph API. Supports ?limit=N&after=CURSOR."""
     account = SocialAccount.query.get_or_404(account_id)
     if account.platform != "instagram":
         return _error("Only Instagram accounts")
@@ -1844,9 +1844,17 @@ def get_ig_media(account_id):
     if not token or not ig_id:
         return _error("Missing credentials")
     import requests as _req
+    params = {
+        "fields":       "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink",
+        "limit":        request.args.get("limit", 50),
+        "access_token": token,
+    }
+    after = request.args.get("after")
+    if after:
+        params["after"] = after
     r = _req.get(
         f"https://graph.instagram.com/v21.0/{ig_id}/media",
-        params={"fields": "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink", "limit": 10, "access_token": token},
+        params=params,
         timeout=20,
     )
     r.raise_for_status()
