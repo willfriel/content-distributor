@@ -39,7 +39,7 @@ NICHE_POST_TIMES = {
 
 def _job_trading():    run_pipeline_for_niche("trading",    _app)
 def _job_fitness():    run_pipeline_for_niche("fitness",    _app)
-def _job_crime():      run_pipeline_for_niche("crime",      _app)
+def _job_crime():      run_crime_pipeline(_app)
 def _job_sports():     run_pipeline_for_niche("sports",     _app)
 def _job_gaming():     run_pipeline_for_niche("gaming",     _app)
 def _job_everything(): run_pipeline_for_niche("everything", _app)
@@ -455,6 +455,146 @@ def run_kids_pipeline(app):
             traceback.print_exc()
 
 
+def run_crime_pipeline(app):
+    """
+    Crime/horror niche pipeline:
+    1. Generate a scary story via Claude
+    2. Narrate with ElevenLabs
+    3. Download a brainrot background clip from Reddit
+    4. Composite: darkened brainrot + narration + subtitle word overlay
+    5. Post to all crime accounts
+    """
+    with app.app_context():
+        from models import db, Niche, SocialAccount, PipelineRun, ContentQueue, CreditBudget
+        from server  import _run_job
+        from pipeline.crime_story import generate_story_text, build_crime_short
+        from pipeline.captions    import generate_captions
+        from pipeline.sources     import fetch_brainrot_clip
+        from integrations.elevenlabs import generate_voiceover
+        from datetime import timedelta
+
+        niche = "crime"
+
+        cutoff = datetime.utcnow() - timedelta(minutes=10)
+        recent = PipelineRun.query.filter(
+            PipelineRun.niche      == niche,
+            PipelineRun.status     == "running",
+            PipelineRun.started_at >= cutoff,
+        ).first()
+        if recent:
+            print(f"[crime] Skipping — run #{recent.id} already in progress")
+            return
+
+        print(f"[crime] Starting story pipeline at {datetime.utcnow()}")
+        run = PipelineRun(niche=niche, status="running", started_at=datetime.utcnow())
+        db.session.add(run)
+        db.session.commit()
+
+        narration_path = None
+        brainrot_path  = None
+        video_path     = None
+
+        try:
+            niche_obj = Niche.query.filter_by(name=niche, is_active=True).first()
+            if not niche_obj:
+                run.status = "skipped"; run.note = "niche not found"
+                db.session.commit(); return
+
+            accounts = SocialAccount.query.filter_by(niche_id=niche_obj.id, is_active=True).all()
+            if not accounts:
+                run.status = "skipped"; run.note = "no active accounts"
+                db.session.commit(); return
+
+            # 1. Generate scary story
+            title, story_text = generate_story_text(target_seconds=70)
+            print(f"[crime] Story generated: {title[:60]}")
+
+            # 2. Narrate with ElevenLabs
+            narration_path, v_id, v_name = generate_voiceover(
+                text=story_text, niche="crime", db_session=db.session
+            )
+            if not narration_path:
+                run.status = "failed"; run.note = "narration generation failed"
+                db.session.commit(); return
+
+            # 3. Download a brainrot background clip
+            for candidate in fetch_brainrot_clip(max_results=5):
+                url = candidate.get("url")
+                if url:
+                    brainrot_path = _download_video(url)
+                    if brainrot_path:
+                        break
+
+            if not brainrot_path:
+                run.status = "failed"; run.note = "brainrot clip download failed"
+                db.session.commit(); return
+
+            # 4. Build composite crime short
+            video_path = build_crime_short(brainrot_path, narration_path, story_text)
+            if not video_path:
+                run.status = "failed"; run.note = "crime short build failed"
+                db.session.commit(); return
+
+            # 5. Move to static dir
+            static_dir = Path(app.root_path) / "static" / "videos"
+            static_dir.mkdir(parents=True, exist_ok=True)
+            dest = static_dir / f"pipeline_crime_{run.id}.mp4"
+            import shutil as _shutil
+            _shutil.move(video_path, str(dest))
+            video_path = None  # moved, no longer needs cleanup
+
+            base_url  = os.environ.get("BASE_URL", "http://localhost:5000").rstrip("/")
+            video_url = f"{base_url}/static/videos/{dest.name}"
+
+            cap_a, cap_b = generate_captions("crime", title, add_longform_cta=True)
+
+            item = ContentQueue(
+                niche_id=niche_obj.id, video_url=video_url,
+                title=title, description=cap_a,
+                platforms=list({a.platform for a in accounts}),
+                use_opusclip=False, status="pending",
+                upload_results={}, clipped_urls=[],
+            )
+            db.session.add(item)
+            db.session.commit()
+
+            _run_job(
+                item.id, accounts, False,
+                content_type = "crime_story",
+                account_caps = {a.id: ([cap_a, cap_b][i % 2]) for i, a in enumerate(accounts)},
+                account_vars = {a.id: "A" if i % 2 == 0 else "B" for i, a in enumerate(accounts)},
+                ab_test_id   = None,
+                voice_id     = v_id,
+                voice_name   = v_name,
+            )
+
+            budget = CreditBudget.query.filter_by(service="posts_per_day", niche=niche).first()
+            if budget:
+                budget.current_usage += 1
+                db.session.commit()
+
+            run.status       = "completed"
+            run.note         = f"crime story: {title[:60]}"
+            run.video_url    = video_url
+            run.completed_at = datetime.utcnow()
+            db.session.commit()
+            print(f"[crime] Completed: {title[:60]}")
+
+        except Exception as e:
+            import traceback
+            run.status = "failed"; run.note = str(e)[:500]
+            db.session.commit()
+            print(f"[crime] ERROR: {e}")
+            traceback.print_exc()
+        finally:
+            for p in [narration_path, brainrot_path, video_path]:
+                try:
+                    if p and os.path.exists(p):
+                        os.unlink(p)
+                except Exception:
+                    pass
+
+
 def _download_video(url: str, max_duration: int = None) -> str | None:
     """Download a video to a temp file. Returns path or None."""
     import re
@@ -624,4 +764,7 @@ def get_scheduler() -> BackgroundScheduler | None:
 def trigger_now(niche: str, app):
     """Manually trigger a pipeline run for a niche right now."""
     import threading
-    threading.Thread(target=run_pipeline_for_niche, args=[niche, app], daemon=True).start()
+    if niche == "crime":
+        threading.Thread(target=run_crime_pipeline, args=[app], daemon=True).start()
+    else:
+        threading.Thread(target=run_pipeline_for_niche, args=[niche, app], daemon=True).start()

@@ -44,19 +44,35 @@ NICHE_CONFIG = {
         "twitch_games":     [],
     },
     "trading": {
-        "youtube_queries": ["trading tips shorts", "crypto analysis 2025", "stock market explained short"],
-        "subreddits":      ["wallstreetbets", "investing", "CryptoCurrency"],
+        "youtube_queries": [
+            "day trader secrets shorts",
+            "how i make money trading stocks",
+            "investor advice that changed my life",
+            "stock market explained simple short",
+            "crypto trading strategy that works",
+            "wall street secrets revealed short",
+            "millionaire investor speech short",
+        ],
+        "subreddits":      ["wallstreetbets", "investing", "Daytrading"],
         "rss_feeds":       ["https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US"],
         "keywords":        ["trading", "crypto", "stocks", "market", "investing"],
         "twitch_streamers": [],
         "twitch_games":     ["Science & Technology"],
     },
     "fitness": {
-        "youtube_queries": ["fitness tips short", "workout motivation shorts", "nutrition advice gym",
-                            "mindset motivation short", "self improvement shorts", "discipline habits short"],
-        "subreddits":      ["fitness", "gym", "bodybuilding", "selfimprovement", "motivation"],
+        "youtube_queries": [
+            "bodybuilder workout tips short",
+            "how to build muscle fast short",
+            "gym mistakes beginners make shorts",
+            "what to eat to build muscle short",
+            "chest workout tutorial shorts",
+            "fitness influencer daily routine short",
+            "how to lose weight fast gym short",
+            "powerlifter training tips short",
+        ],
+        "subreddits":      ["fitness", "bodybuilding", "weightlifting", "gym"],
         "rss_feeds":       ["https://www.menshealth.com/rss/all.xml"],
-        "keywords":        ["workout", "fitness", "gym", "nutrition", "health", "mindset", "discipline", "habits"],
+        "keywords":        ["workout", "fitness", "gym", "bodybuilder", "muscle", "nutrition", "lifting"],
         "twitch_streamers": ["jujimufu", "ldlc_kawhi", "naturally_stefany"],
         "twitch_games":     ["Fitness & Health"],
     },
@@ -77,20 +93,32 @@ NICHE_CONFIG = {
         "twitch_games":     ["EA Sports FC 25", "NBA 2K25", "Madden NFL 25"],
     },
     "gaming": {
-        "youtube_queries": ["gaming moments shorts", "funny gaming clip", "speedrun world record short",
-                            "gaming fail shorts", "best plays gaming short"],
-        "subreddits":      ["gaming", "LivestreamFail", "pcgaming", "Unexpected"],
+        "youtube_queries": [
+            "insane gaming clip shorts",
+            "funniest gaming moments 2025",
+            "pro gamer clutch moment short",
+            "rage quit gaming shorts",
+            "gaming world record broken short",
+            "unexpected gaming moment short",
+        ],
+        "subreddits":      ["LivestreamFail", "gaming", "nextfuckinglevel"],
         "rss_feeds":       [],
         "keywords":        ["gaming", "gamer", "gameplay", "twitch", "esports", "streamer"],
         "twitch_streamers": ["shroud", "summit1g", "asmongold", "moistcr1tikal", "xqc"],
-        "twitch_games":     ["Fortnite", "Valorant", "Minecraft", "Apex Legends", "Call of Duty: Warzone"],
+        "twitch_games":     ["Fortnite", "Valorant", "Apex Legends", "Call of Duty: Warzone"],
     },
     "everything": {
-        "youtube_queries": ["viral short 2025", "funny moments shorts", "interesting facts short"],
-        "subreddits":      ["interestingasfuck", "oddlysatisfying", "nextfuckinglevel"],
+        "youtube_queries": [
+            "unbelievable moment caught camera short",
+            "shocking thing happened shorts",
+            "you wont believe this viral short",
+            "mind blowing moment short",
+            "craziest thing ever shorts",
+        ],
+        "subreddits":      ["nextfuckinglevel", "interestingasfuck", "WTF", "PublicFreakout"],
         "rss_feeds":       [],
-        "keywords":        ["viral", "interesting", "funny", "satisfying", "amazing"],
-        "twitch_streamers": ["xqc", "moistcr1tikal", "northernlion", "hasanabi"],
+        "keywords":        ["viral", "unbelievable", "shocking", "crazy", "insane"],
+        "twitch_streamers": ["xqc", "moistcr1tikal", "hasanabi"],
         "twitch_games":     ["Just Chatting"],
     },
     "kids": {
@@ -120,14 +148,15 @@ def fetch_youtube_candidates(niche: str, api_key: str, max_results: int = 5) -> 
         r = requests.get(
             "https://www.googleapis.com/youtube/v3/search",
             params={
-                "part":            "snippet",
-                "q":               query,
-                "type":            "video",
-                "videoDuration":   "short",      # under 4 minutes
-                "videoLicense":    "creativeCommon",
-                "order":           "viewCount",
-                "maxResults":      max_results,
-                "key":             api_key,
+                "part":              "snippet",
+                "q":                 query,
+                "type":              "video",
+                "videoDuration":     "short",      # under 4 minutes
+                "videoLicense":      "creativeCommon",
+                "order":             "viewCount",
+                "relevanceLanguage": "en",         # English only — avoids foreign-language clips
+                "maxResults":        max_results,
+                "key":               api_key,
             },
             timeout=15,
         )
@@ -391,8 +420,10 @@ def get_candidates(niche: str, youtube_api_key: str = None) -> list[dict]:
     # Twitch clips (viral, short-form)
     candidates += fetch_twitch_candidates(niche)
 
-    # Pexels stock video (fitness, gaming — needs real b-roll)
-    if niche in ("fitness", "gaming", "sports", "kids", "trading", "twitch"):
+    # Pexels stock video — only niches that genuinely need b-roll
+    # Excluded: trading (returns random finance b-roll, not informational),
+    #           fitness (returns clipboard/static props, not workout content)
+    if niche in ("gaming", "sports", "kids", "twitch", "everything"):
         candidates += fetch_pexels_candidates(niche)
 
     # Reddit — for "everything" pull BOTH timeframes (fresh + all-time classics)
@@ -410,4 +441,8 @@ def get_candidates(niche: str, youtube_api_key: str = None) -> list[dict]:
     rss = fetch_rss_topics(niche)
     candidates += [fetch_ai_candidate(niche, t["title"]) for t in rss if t["title"]]
 
+    # Sort so highest-quality sources surface first:
+    # twitch clips are pre-filtered for entertainment; pexels is last resort
+    _QUALITY = {"twitch": 0, "reddit": 1, "youtube": 2, "pexels": 3, "brainrot": 4}
+    candidates.sort(key=lambda c: _QUALITY.get(c.get("source_type", ""), 5))
     return [c for c in candidates if c]
