@@ -1832,6 +1832,27 @@ def list_all_accounts():
     return jsonify([a.to_dict() for a in accounts])
 
 
+@app.route("/api/accounts/<int:account_id>/ig-media", methods=["GET"])
+def get_ig_media(account_id):
+    """Fetch recent media from an Instagram account via Graph API."""
+    account = SocialAccount.query.get_or_404(account_id)
+    if account.platform != "instagram":
+        return _error("Only Instagram accounts")
+    creds = account.get_credentials()
+    token = creds.get("access_token")
+    ig_id = creds.get("instagram_user_id")
+    if not token or not ig_id:
+        return _error("Missing credentials")
+    import requests as _req
+    r = _req.get(
+        f"https://graph.instagram.com/v21.0/{ig_id}/media",
+        params={"fields": "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink", "limit": 10, "access_token": token},
+        timeout=20,
+    )
+    r.raise_for_status()
+    return jsonify(r.json())
+
+
 @app.route("/api/accounts/<int:account_id>", methods=["PATCH"])
 def update_account(account_id):
     """Update account_name stored in DB. Body: { "account_name": "..." }"""
