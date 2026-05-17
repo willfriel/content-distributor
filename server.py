@@ -2219,7 +2219,8 @@ def debug_clip_fetch(streamer):
 # ---------------------------------------------------------------------------
 
 def _verify_callback_secret():
-    secret = os.environ.get("CALLBACK_SECRET", "")
+    import os as _os2
+    secret = _os2.environ.get("CALLBACK_SECRET", "")
     auth   = request.headers.get("Authorization", "")
     return bool(secret) and auth == f"Bearer {secret}"
 
