@@ -478,7 +478,7 @@ def _post_clip(clip_id: str, clip_title: str, streamer: str, app):
         clip_note = f"clip:{clip_id}"
         already   = PipelineRun.query.filter(
             PipelineRun.note       == clip_note,
-            PipelineRun.started_at >= datetime.utcnow() - timedelta(hours=24),
+            PipelineRun.started_at >= datetime.utcnow() - timedelta(hours=2),
         ).first()
         if already:
             print(f"[eventsub] Skipping {clip_id} — already dispatched (run #{already.id})")
