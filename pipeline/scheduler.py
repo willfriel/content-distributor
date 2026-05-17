@@ -115,6 +115,86 @@ def _job_longform_gaming():     run_longform_for_niche("gaming",     _app)
 def _job_longform_everything(): run_longform_for_niche("everything", _app)
 def _job_longform_kids():       run_longform_for_niche("kids",       _app)
 
+def _job_health_check():
+    """
+    Runs every 2 hours.
+    1. Clears stuck "running" pipeline runs (server crashed mid-job).
+    2. Finds failed runs from the last 24 h and retries the niche,
+       unless a successful run already happened today or the failure
+       was a content issue (no candidates / download failed for every pick).
+    """
+    import threading, time as _time
+    with _app.app_context():
+        from models import db, PipelineRun
+        now    = datetime.utcnow()
+
+        # --- Step 1: clear stuck "running" runs older than 30 min ---
+        stuck = PipelineRun.query.filter(
+            PipelineRun.status     == "running",
+            PipelineRun.started_at <  now - __import__("datetime").timedelta(minutes=30),
+        ).all()
+        for run in stuck:
+            print(f"[health] Clearing stuck run #{run.id} ({run.niche}) — was running since {run.started_at}")
+            run.status = "failed"
+            run.note   = (run.note or "") + " | cleared-stuck"
+        if stuck:
+            db.session.commit()
+
+        # --- Step 2: find failed runs not yet retried ---
+        window      = now - __import__("datetime").timedelta(hours=24)
+        failed_runs = PipelineRun.query.filter(
+            PipelineRun.status     == "failed",
+            PipelineRun.started_at >= window,
+        ).all()
+
+        # Skip niches that had a successful run today
+        successful_today = {
+            r.niche for r in PipelineRun.query.filter(
+                PipelineRun.status     == "completed",
+                PipelineRun.started_at >= now - __import__("datetime").timedelta(hours=24),
+            ).all()
+        }
+
+        # Skip content-side failures (no videos to fetch — retrying immediately won't help)
+        _content_skip = ("no video candidates", "download failed", "niche not found", "no active accounts")
+
+        retried = set()
+        for run in failed_runs:
+            niche = run.niche
+            note  = (run.note or "").lower()
+            if niche in retried:
+                continue
+            if niche in successful_today:
+                continue
+            if "retried" in note:
+                continue
+            if any(s in note for s in _content_skip):
+                print(f"[health] Skipping content-side failure for {niche}: {run.note}")
+                continue
+            if niche not in NICHE_POST_TIMES and niche != "crime":
+                continue
+
+            print(f"[health] ⚠️  Failed run #{run.id} ({niche}): {run.note} — scheduling retry")
+            run.note = (run.note or "") + " | retried"
+            db.session.commit()
+            retried.add(niche)
+
+            def _retry(n=niche):
+                _time.sleep(60)  # brief pause so the health check itself doesn't hold the lock
+                if n == "crime":
+                    run_crime_pipeline(_app)
+                else:
+                    run_pipeline_for_niche(n, _app)
+
+            threading.Thread(target=_retry, daemon=True).start()
+            _time.sleep(5)   # stagger multiple retries so they queue up, not pile up
+
+        if retried:
+            print(f"[health] Retrying niches: {', '.join(retried)}")
+        else:
+            print(f"[health] ✅ All pipeline runs look healthy")
+
+
 _JOB_FUNCS = {
     "trading":    _job_trading,
     "fitness":    _job_fitness,
@@ -806,8 +886,18 @@ def init_scheduler(app):
                 misfire_grace_time = 3600,
             )
 
+    # Health check — every 2 hours: clear stuck runs, retry failed niches
+    _scheduler.add_job(
+        func               = _job_health_check,
+        trigger            = "interval",
+        hours              = 2,
+        id                 = "health_check",
+        replace_existing   = True,
+        misfire_grace_time = 3600,
+    )
+
     _scheduler.start()
-    print(f"[scheduler] Started — {len(NICHE_POST_TIMES)} daily jobs scheduled")
+    print(f"[scheduler] Started — {len(NICHE_POST_TIMES)} daily jobs + health check every 2h")
     return _scheduler
 
 
