@@ -204,7 +204,8 @@ def run_pipeline_for_niche(niche: str, app):
             static_dir = Path(app.root_path) / "static" / "videos"
             static_dir.mkdir(parents=True, exist_ok=True)
             dest = static_dir / f"pipeline_{niche}_{run.id}.mp4"
-            Path(video_path).rename(dest)
+            import shutil as _shutil
+            _shutil.move(video_path, str(dest))
 
             base_url  = os.environ.get("BASE_URL", "http://localhost:5000").rstrip("/")
             video_url = f"{base_url}/static/videos/{dest.name}"
