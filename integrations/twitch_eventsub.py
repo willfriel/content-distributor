@@ -375,16 +375,34 @@ def _format_vertical(input_path: str, hook: str, cta: str, srt: str | None = Non
     def esc(t: str) -> str:
         return t.replace("\\", "\\\\").replace("’", "\\’").replace(":", "\\:").replace("%", "\\%")
 
-    hook_esc = esc(hook[:70])
-    cta_esc  = esc(cta[:90])
+    def wrap_esc(text: str, max_chars: int) -> str:
+        """Word-wrap text and escape each line for ffmpeg drawtext (\\n = newline)."""
+        words = text.split()
+        lines, cur = [], ""
+        for w in words:
+            if cur and len(cur) + 1 + len(w) > max_chars:
+                lines.append(cur)
+                cur = w
+            else:
+                cur = f"{cur} {w}".strip()
+        if cur:
+            lines.append(cur)
+        return r"\n".join(esc(line) for line in lines)
+
+    # fontsize 48 @ 20 chars/line → max ~530px, safely within 720px canvas
+    # fontsize 36 @ 28 chars/line → max ~555px, safely within 720px canvas
+    hook_esc = wrap_esc(hook[:120], 20)
+    cta_esc  = wrap_esc(cta[:120], 28)
 
     dt_hook = (
-        f"drawtext=text=’{hook_esc}’:fontsize=78:fontcolor=white"
+        f"drawtext=text=’{hook_esc}’:fontsize=48:fontcolor=white"
         f":x=(w-text_w)/2:y={HOOK_Y}:shadowcolor=black:shadowx=4:shadowy=4"
+        f":line_spacing=8"
     )
     dt_cta = (
-        f"drawtext=text=’{cta_esc}’:fontsize=46:fontcolor=white"
+        f"drawtext=text=’{cta_esc}’:fontsize=36:fontcolor=white"
         f":x=(w-text_w)/2:y={CTA_Y}:shadowcolor=black:shadowx=3:shadowy=3"
+        f":line_spacing=6"
     )
 
     bitrate_flags = ["-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "5000k"]
