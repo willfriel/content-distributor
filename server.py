@@ -2446,6 +2446,10 @@ def _internal_clip_done_impl():
 
     from pipeline.captions import generate_captions
     cap_a, cap_b = generate_captions("twitch", title)
+    if streamer:
+        credit = f"Credit: {streamer} on Twitch (twitch.tv/{streamer})"
+        cap_a  = f"{cap_a}\n\n{credit}" if cap_a else credit
+        cap_b  = f"{cap_b}\n\n{credit}" if cap_b else credit
 
     item = ContentQueue(
         niche_id       = niche_obj.id if niche_obj else None,

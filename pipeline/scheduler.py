@@ -212,6 +212,7 @@ def run_pipeline_for_niche(niche: str, app):
             title     = pick.get("title", f"{niche} video")[:100]
 
             cap_a, cap_b = generate_captions(niche, title, add_longform_cta=True)
+            cap_a, cap_b = _append_credit(cap_a, cap_b, pick)
 
             # Generate AI voiceover with random voice (learning system picks best over time)
             from integrations.elevenlabs import generate_voiceover, overlay_voiceover
@@ -455,6 +456,33 @@ def run_kids_pipeline(app):
             traceback.print_exc()
 
 
+def _source_credit(candidate: dict) -> str:
+    """Return a one-line attribution string for the bottom of a caption."""
+    src = candidate.get("source_type", "")
+    if src == "youtube":
+        url = candidate.get("url", "")
+        vid = url.split("v=")[-1].split("&")[0] if "v=" in url else ""
+        return f"Credit: youtube.com/watch?v={vid}" if vid else "Credit: youtube.com"
+    if src in ("reddit", "brainrot"):
+        sub = candidate.get("subreddit", "Reddit")
+        return f"Credit: r/{sub} (Reddit)"
+    if src == "pexels":
+        return "Credit: Pexels (pexels.com)"
+    if src == "twitch":
+        streamer = candidate.get("streamer", "")
+        return f"Credit: {streamer} on Twitch" if streamer else "Credit: Twitch"
+    return ""
+
+
+def _append_credit(cap_a: str, cap_b: str, candidate: dict) -> tuple[str, str]:
+    credit = _source_credit(candidate)
+    if not credit:
+        return cap_a, cap_b
+    def _add(cap: str) -> str:
+        return f"{cap}\n\n{credit}" if cap else credit
+    return _add(cap_a), _add(cap_b)
+
+
 def run_crime_pipeline(app):
     """
     Crime/horror niche pipeline:
@@ -518,11 +546,13 @@ def run_crime_pipeline(app):
                 db.session.commit(); return
 
             # 3. Download a brainrot background clip
+            brainrot_candidate = None
             for candidate in fetch_brainrot_clip(max_results=5):
                 url = candidate.get("url")
                 if url:
                     brainrot_path = _download_video(url)
                     if brainrot_path:
+                        brainrot_candidate = candidate
                         break
 
             if not brainrot_path:
@@ -547,6 +577,8 @@ def run_crime_pipeline(app):
             video_url = f"{base_url}/static/videos/{dest.name}"
 
             cap_a, cap_b = generate_captions("crime", title, add_longform_cta=True)
+            if brainrot_candidate:
+                cap_a, cap_b = _append_credit(cap_a, cap_b, brainrot_candidate)
 
             item = ContentQueue(
                 niche_id=niche_obj.id, video_url=video_url,
