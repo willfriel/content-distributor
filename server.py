@@ -1034,7 +1034,6 @@ def _run_job(content_id: int, accounts: list, should_clip: bool,
         results = {}
 
         niche_name = item.niche.name if item.niche else ""
-        base_description = _inject_affiliate_links(item.description or "", niche_name, content_id)
 
         for account in accounts:
             # Skip if this content was already posted to this account+platform
@@ -1047,11 +1046,16 @@ def _run_job(content_id: int, accounts: list, should_clip: bool,
                 print(f"[_run_job] Skipping {account.platform}/{account.account_name} — already posted content #{content_id}")
                 continue
 
-            creds   = account.get_credentials()
+            creds            = account.get_credentials()
+            base_description = _inject_affiliate_links(
+                item.description or "", niche_name, content_id, account.follower_count
+            )
             caption = (account_caps or {}).get(account.id, base_description) or base_description
             # For A/B tests, still inject affiliate links into the variant caption
             if account_caps and account.id in account_caps:
-                caption = _inject_affiliate_links(account_caps[account.id], niche_name, content_id)
+                caption = _inject_affiliate_links(
+                    account_caps[account.id], niche_name, content_id, account.follower_count
+                )
             variant = (account_vars or {}).get(account.id)
             account_results = []
 
@@ -2081,13 +2085,38 @@ def _seed_reference_accounts():
 # Link click tracking
 # ---------------------------------------------------------------------------
 
-def _inject_affiliate_links(description: str, niche: str, content_id: int) -> str:
-    """Append tracked affiliate links for the niche to the video description."""
+_FOLLOWER_THRESHOLD_BASIC = 500   # minimum followers before any links appear
+_FOLLOWER_THRESHOLD_FULL  = 2000  # unlock bonus links + monetization note
+
+def _inject_affiliate_links(description: str, niche: str, content_id: int,
+                            follower_count: int = 0) -> str:
+    """Append tracked affiliate links based on account follower tier.
+
+    Tier 0 (<500):  no links — avoids Instagram scam flags on new accounts.
+    Tier 1 (500+):  niche affiliate links only.
+    Tier 2 (2000+): all niche links + cross-niche bonus links + monetization note.
+    """
+    if follower_count < _FOLLOWER_THRESHOLD_BASIC:
+        return description
+
     links = TrackedLink.query.filter_by(niche=niche, is_active=True).all()
     if not links:
         return description
-    base = Config.BASE_URL.rstrip("/")
+
+    base  = Config.BASE_URL.rstrip("/")
     lines = "\n".join(f"{l.label}: {base}/r/{l.slug}?job={content_id}" for l in links)
+
+    if follower_count >= _FOLLOWER_THRESHOLD_FULL:
+        bonus = TrackedLink.query.filter(
+            TrackedLink.niche != niche,
+            TrackedLink.is_active == True,
+        ).all()
+        if bonus:
+            lines += "\n" + "\n".join(
+                f"{l.label}: {base}/r/{l.slug}?job={content_id}" for l in bonus
+            )
+        lines += "\n\nWatch on YouTube — ad revenue supports this channel!"
+
     return f"{description}\n\n{lines}" if description else lines
 
 
@@ -2564,6 +2593,7 @@ def _migrate():
         ("post_metrics",   "voice_id",         "ALTER TABLE post_metrics ADD COLUMN voice_id VARCHAR(100)"),
         ("post_metrics",   "voice_name",        "ALTER TABLE post_metrics ADD COLUMN voice_name VARCHAR(200)"),
         ("social_accounts","token_expires_at",  "ALTER TABLE social_accounts ADD COLUMN token_expires_at TIMESTAMP"),
+        ("social_accounts","follower_count",    "ALTER TABLE social_accounts ADD COLUMN follower_count INTEGER DEFAULT 0"),
     ]
     # Rename anatomy → gaming niche in place
     try:

@@ -36,6 +36,7 @@ class SocialAccount(db.Model):
     is_active            = db.Column(db.Boolean, default=True)
     needs_reauth         = db.Column(db.Boolean, default=False)
     token_expires_at     = db.Column(db.DateTime, nullable=True)
+    follower_count       = db.Column(db.Integer, default=0)
     created_at           = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at           = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
