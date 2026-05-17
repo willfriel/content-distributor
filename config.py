@@ -58,6 +58,11 @@ class Config:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+    # Email notifications (Gmail SMTP)
+    NOTIFY_EMAIL_FROM     = os.environ.get("NOTIFY_EMAIL_FROM")
+    NOTIFY_EMAIL_PASSWORD = os.environ.get("NOTIFY_EMAIL_PASSWORD")
+    NOTIFY_EMAIL_TO       = os.environ.get("NOTIFY_EMAIL_TO")
+
     # Public base URL (used to generate /r/<slug> click-tracking links)
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
 

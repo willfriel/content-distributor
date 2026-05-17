@@ -352,6 +352,9 @@ class PostMetrics(db.Model):
     ab_variant         = db.Column(db.String(10))
     voice_id           = db.Column(db.String(100))
     voice_name         = db.Column(db.String(200))
+    hook_text          = db.Column(db.Text)
+    source_type        = db.Column(db.String(50))
+    source_subtype     = db.Column(db.String(200))
 
     views              = db.Column(db.Integer, default=0)
     likes              = db.Column(db.Integer, default=0)
@@ -360,6 +363,8 @@ class PostMetrics(db.Model):
     saves              = db.Column(db.Integer, default=0)
     reach              = db.Column(db.Integer, default=0)
     engagement_score   = db.Column(db.Float, default=0.0)
+
+    viral_milestone    = db.Column(db.Integer, default=0)  # 0=none 1=10k 2=100k
 
     posted_at          = db.Column(db.DateTime, default=datetime.utcnow)
     metrics_fetched_at = db.Column(db.DateTime)
@@ -380,9 +385,34 @@ class PostMetrics(db.Model):
             "caption": self.caption, "content_type": self.content_type,
             "ab_test_id": self.ab_test_id, "ab_variant": self.ab_variant,
             "voice_id": self.voice_id, "voice_name": self.voice_name,
+            "hook_text": self.hook_text, "source_type": self.source_type,
+            "source_subtype": self.source_subtype,
             "views": self.views, "likes": self.likes, "comments": self.comments,
             "shares": self.shares, "saves": self.saves, "reach": self.reach,
             "engagement_score": self.engagement_score,
             "posted_at": self.posted_at.isoformat() if self.posted_at else None,
             "metrics_fetched_at": self.metrics_fetched_at.isoformat() if self.metrics_fetched_at else None,
+        }
+
+
+class SourceScore(db.Model):
+    """Learned performance score per (niche, source_type, source_subtype)."""
+    __tablename__ = "source_scores"
+
+    id             = db.Column(db.Integer, primary_key=True)
+    niche          = db.Column(db.String(100), nullable=False)
+    source_type    = db.Column(db.String(50),  nullable=False)
+    source_subtype = db.Column(db.String(200))
+    post_count     = db.Column(db.Integer, default=0)
+    avg_engagement = db.Column(db.Float,   default=0.0)
+    avg_views      = db.Column(db.Integer, default=0)
+    updated_at     = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id, "niche": self.niche,
+            "source_type": self.source_type, "source_subtype": self.source_subtype,
+            "post_count": self.post_count, "avg_engagement": self.avg_engagement,
+            "avg_views": self.avg_views,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

@@ -14,7 +14,7 @@ from flask_sqlalchemy import SQLAlchemy
 from google_auth_oauthlib.flow import Flow
 
 from config import Config
-from models import db, Niche, SocialAccount, ContentQueue, PostMetrics, ABTest, TrackedLink, LinkClick, CreditBudget, PipelineRun, LumiStory, LongFormVideo
+from models import db, Niche, SocialAccount, ContentQueue, PostMetrics, ABTest, TrackedLink, LinkClick, CreditBudget, PipelineRun, LumiStory, LongFormVideo, SourceScore
 from integrations.opusclip import OpusClipClient
 from integrations import youtube as yt_integration
 from integrations import instagram as ig_integration
@@ -818,6 +818,12 @@ def refresh_instagram_tokens():
                 else:
                     account.needs_reauth = True
                     _telegram_notify(f"⚠️ Instagram token expired for @{account.account_name} — needs reconnect")
+                    from pipeline.notify import notify
+                    notify(
+                        f"⚠️ Action needed — @{account.account_name} needs reconnect",
+                        f"Instagram token for @{account.account_name} has expired.\n\n"
+                        f"Go to your dashboard > Accounts and reconnect it to resume posting."
+                    )
                     print(f"[tokens] Refresh failed for @{account.account_name}: {r.text}")
             except Exception as e:
                 print(f"[tokens] Error refreshing @{account.account_name}: {e}")
@@ -857,6 +863,12 @@ def refresh_youtube_tokens():
             except Exception as e:
                 account.needs_reauth = True
                 _telegram_notify(f"⚠️ YouTube token expired for {account.account_name} — needs reconnect")
+                from pipeline.notify import notify
+                notify(
+                    f"⚠️ Action needed — {account.account_name} YouTube needs reconnect",
+                    f"YouTube token for {account.account_name} has expired.\n\n"
+                    f"Go to your dashboard > Accounts and reconnect it to resume posting."
+                )
                 print(f"[tokens] YouTube refresh failed for {account.account_name}: {e}")
 
         db.session.commit()
@@ -998,7 +1010,8 @@ def quick_upload():
 def _run_job(content_id: int, accounts: list, should_clip: bool,
              content_type: str = "general", ab_test_id: int = None,
              account_caps: dict = None, account_vars: dict = None,
-             voice_id: str = None, voice_name: str = None):
+             voice_id: str = None, voice_name: str = None,
+             hook_text: str = None, source_type: str = None, source_subtype: str = None):
     """Execute OpusClip + uploads for a content item. Runs in a thread or inline."""
     with app.app_context():
         item   = ContentQueue.query.get(content_id)
@@ -1083,17 +1096,20 @@ def _run_job(content_id: int, accounts: list, should_clip: bool,
                     post_id = r.get("video_id") or r.get("media_id")
                     if post_id and "error" not in r:
                         pm = PostMetrics(
-                            content_id   = content_id,
-                            account_id   = account.id,
-                            niche        = item.niche.name if item.niche else None,
-                            platform     = account.platform,
-                            post_id      = post_id,
-                            caption      = caption,
-                            content_type = content_type,
-                            ab_test_id   = ab_test_id,
-                            ab_variant   = variant,
-                            voice_id     = voice_id,
-                            voice_name   = voice_name,
+                            content_id     = content_id,
+                            account_id     = account.id,
+                            niche          = item.niche.name if item.niche else None,
+                            platform       = account.platform,
+                            post_id        = post_id,
+                            caption        = caption,
+                            content_type   = content_type,
+                            ab_test_id     = ab_test_id,
+                            ab_variant     = variant,
+                            voice_id       = voice_id,
+                            voice_name     = voice_name,
+                            hook_text      = hook_text,
+                            source_type    = source_type,
+                            source_subtype = source_subtype,
                         )
                         db.session.add(pm)
 
@@ -1794,6 +1810,18 @@ def pipeline_run_now(niche):
         return _error(f"Niche '{niche}' not found", 404)
     trigger_now(niche, app)
     return jsonify({"status": "triggered", "niche": niche})
+
+
+@app.route("/api/test/notify", methods=["POST"])
+def test_notify():
+    """Send a test message to verify Telegram/email is configured correctly."""
+    from pipeline.notify import notify
+    notify(
+        "✅ Test — notifications are working",
+        "Your Content Distributor notifications are set up correctly.\n"
+        "You'll receive alerts for failures, token expiry, viral videos, and daily digests."
+    )
+    return jsonify({"status": "sent"})
 
 
 @app.route("/api/pipeline/health-check", methods=["POST"])
@@ -2692,8 +2720,11 @@ def _internal_clip_done_impl():
             target=_run_job,
             args=(item.id, accounts, False),
             kwargs={
-                "content_type": "twitch_clip",
-                "account_caps": {a.id: caption_variants[i % 2] for i, a in enumerate(accounts)},
+                "content_type":   "twitch_clip",
+                "account_caps":   {a.id: caption_variants[i % 2] for i, a in enumerate(accounts)},
+                "hook_text":      hook or None,
+                "source_type":    "twitch",
+                "source_subtype": streamer or None,
             },
             daemon=True,
         ).start()
@@ -2815,6 +2846,10 @@ def _migrate():
         ("post_metrics",   "voice_name",        "ALTER TABLE post_metrics ADD COLUMN voice_name VARCHAR(200)"),
         ("social_accounts","token_expires_at",  "ALTER TABLE social_accounts ADD COLUMN token_expires_at TIMESTAMP"),
         ("social_accounts","follower_count",    "ALTER TABLE social_accounts ADD COLUMN follower_count INTEGER DEFAULT 0"),
+        ("post_metrics",   "hook_text",         "ALTER TABLE post_metrics ADD COLUMN hook_text TEXT"),
+        ("post_metrics",   "source_type",       "ALTER TABLE post_metrics ADD COLUMN source_type VARCHAR(50)"),
+        ("post_metrics",   "source_subtype",    "ALTER TABLE post_metrics ADD COLUMN source_subtype VARCHAR(200)"),
+        ("post_metrics",   "viral_milestone",   "ALTER TABLE post_metrics ADD COLUMN viral_milestone INTEGER DEFAULT 0"),
     ]
     # Rename anatomy → gaming niche in place
     try:

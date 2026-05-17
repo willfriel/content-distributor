@@ -115,6 +115,74 @@ def _job_longform_gaming():     run_longform_for_niche("gaming",     _app)
 def _job_longform_everything(): run_longform_for_niche("everything", _app)
 def _job_longform_kids():       run_longform_for_niche("kids",       _app)
 
+def _job_harvest_metrics():
+    from pipeline.learning import harvest_metrics
+    harvest_metrics(_app)
+
+def _job_update_scores():
+    from pipeline.learning import update_source_scores
+    update_source_scores(_app)
+
+def _job_daily_digest():
+    """
+    Sends a daily email at 22:00 UTC summarising what posted today.
+    Each niche shows: status (✅/❌/⏭), post count, and any failure note.
+    """
+    with _app.app_context():
+        from models import PipelineRun, PostMetrics
+        from pipeline.notify import notify
+
+        now    = datetime.utcnow()
+        window = now - __import__("datetime").timedelta(hours=24)
+
+        runs = PipelineRun.query.filter(
+            PipelineRun.started_at >= window
+        ).order_by(PipelineRun.started_at).all()
+
+        posts_today = PostMetrics.query.filter(
+            PostMetrics.posted_at >= window
+        ).count()
+
+        if not runs and posts_today == 0:
+            notify(
+                "Daily Digest — Nothing ran today",
+                "No pipeline runs and no posts in the last 24 hours.\n"
+                "Check Render logs if this is unexpected.",
+            )
+            return
+
+        lines = [f"Daily digest — {now.strftime('%Y-%m-%d')} UTC\n"]
+        lines.append(f"Total posts sent: {posts_today}\n")
+
+        by_niche: dict[str, list] = {}
+        for r in runs:
+            by_niche.setdefault(r.niche, []).append(r)
+
+        for niche, niche_runs in sorted(by_niche.items()):
+            statuses = [r.status for r in niche_runs]
+            if "completed" in statuses:
+                icon = "✅"
+            elif "failed" in statuses:
+                icon = "❌"
+            else:
+                icon = "⏭"
+
+            latest = niche_runs[-1]
+            note   = f" — {latest.note}" if latest.note else ""
+            lines.append(f"{icon} {niche}{note}")
+
+        failed_niches = [n for n, rs in by_niche.items()
+                         if all(r.status == "failed" for r in rs)]
+        if failed_niches:
+            lines.append(f"\nAction needed: {', '.join(failed_niches)} failed all attempts today.")
+            lines.append("Check Render logs or reconnect accounts if tokens expired.")
+
+        notify(
+            f"Daily Digest — {posts_today} posts sent",
+            "\n".join(lines),
+        )
+
+
 def _job_health_check():
     """
     Runs every 2 hours.
@@ -191,6 +259,17 @@ def _job_health_check():
 
         if retried:
             print(f"[health] Retrying niches: {', '.join(retried)}")
+            from pipeline.notify import notify
+            failure_lines = []
+            for run in failed_runs:
+                if run.niche in retried:
+                    failure_lines.append(f"  • {run.niche}: {run.note or 'unknown error'}")
+            notify(
+                f"⚠️ Auto-retry triggered for {', '.join(retried)}",
+                "The health check found failed pipeline runs and scheduled automatic retries.\n\n"
+                "Failures:\n" + "\n".join(failure_lines) +
+                "\n\nNo action needed unless this repeats — check Render logs if it does."
+            )
         else:
             print(f"[health] ✅ All pipeline runs look healthy")
 
@@ -333,12 +412,15 @@ def _run_pipeline_for_niche_inner(niche: str, app):
             caption_variants = [cap_a, cap_b]
             _run_job(
                 item.id, accounts, False,
-                content_type = pick.get("source_type", "sourced"),
-                account_caps = {a.id: caption_variants[i % 2] for i, a in enumerate(accounts)},
-                account_vars = {a.id: "A" if i % 2 == 0 else "B" for i, a in enumerate(accounts)},
-                ab_test_id   = None,
-                voice_id     = chosen_voice_id,
-                voice_name   = chosen_voice_name,
+                content_type   = pick.get("source_type", "sourced"),
+                account_caps   = {a.id: caption_variants[i % 2] for i, a in enumerate(accounts)},
+                account_vars   = {a.id: "A" if i % 2 == 0 else "B" for i, a in enumerate(accounts)},
+                ab_test_id     = None,
+                voice_id       = chosen_voice_id,
+                voice_name     = chosen_voice_name,
+                hook_text      = title,
+                source_type    = pick.get("source_type"),
+                source_subtype = pick.get("subreddit") or pick.get("streamer") or pick.get("query"),
             )
 
             budget = CreditBudget.query.filter_by(service="posts_per_day", niche=niche).first()
@@ -694,12 +776,15 @@ def _run_crime_pipeline_inner(app):
 
             _run_job(
                 item.id, accounts, False,
-                content_type = "crime_story",
-                account_caps = {a.id: ([cap_a, cap_b][i % 2]) for i, a in enumerate(accounts)},
-                account_vars = {a.id: "A" if i % 2 == 0 else "B" for i, a in enumerate(accounts)},
-                ab_test_id   = None,
-                voice_id     = v_id,
-                voice_name   = v_name,
+                content_type   = "crime_story",
+                account_caps   = {a.id: ([cap_a, cap_b][i % 2]) for i, a in enumerate(accounts)},
+                account_vars   = {a.id: "A" if i % 2 == 0 else "B" for i, a in enumerate(accounts)},
+                ab_test_id     = None,
+                voice_id       = v_id,
+                voice_name     = v_name,
+                hook_text      = title,
+                source_type    = "crime_story",
+                source_subtype = None,
             )
 
             budget = CreditBudget.query.filter_by(service="posts_per_day", niche=niche).first()
@@ -885,6 +970,39 @@ def init_scheduler(app):
                 replace_existing   = True,
                 misfire_grace_time = 3600,
             )
+
+    # Daily digest email — 10pm UTC (after all niche posts are done)
+    _scheduler.add_job(
+        func               = _job_daily_digest,
+        trigger            = "cron",
+        hour               = 22,
+        minute             = 0,
+        id                 = "daily_digest",
+        replace_existing   = True,
+        misfire_grace_time = 3600,
+    )
+
+    # Learning system: harvest engagement metrics 24-72h after posting (6am UTC)
+    _scheduler.add_job(
+        func               = _job_harvest_metrics,
+        trigger            = "cron",
+        hour               = 6,
+        minute             = 0,
+        id                 = "harvest_metrics",
+        replace_existing   = True,
+        misfire_grace_time = 3600,
+    )
+
+    # Learning system: recompute source scores from fresh metrics (7am UTC)
+    _scheduler.add_job(
+        func               = _job_update_scores,
+        trigger            = "cron",
+        hour               = 7,
+        minute             = 0,
+        id                 = "update_source_scores",
+        replace_existing   = True,
+        misfire_grace_time = 3600,
+    )
 
     # Health check — every 2 hours: clear stuck runs, retry failed niches
     _scheduler.add_job(

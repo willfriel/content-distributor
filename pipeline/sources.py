@@ -441,8 +441,15 @@ def get_candidates(niche: str, youtube_api_key: str = None) -> list[dict]:
     rss = fetch_rss_topics(niche)
     candidates += [fetch_ai_candidate(niche, t["title"]) for t in rss if t["title"]]
 
-    # Sort so highest-quality sources surface first:
-    # twitch clips are pre-filtered for entertainment; pexels is last resort
+    # Sort: primary = quality tier, secondary = learned engagement weight (descending)
     _QUALITY = {"twitch": 0, "reddit": 1, "youtube": 2, "pexels": 3, "brainrot": 4}
-    candidates.sort(key=lambda c: _QUALITY.get(c.get("source_type", ""), 5))
+    try:
+        from pipeline.learning import get_source_weight
+        def _sort_key(c):
+            subtype = c.get("subreddit") or c.get("streamer") or c.get("query")
+            weight  = get_source_weight(niche, c.get("source_type", ""), subtype)
+            return (_QUALITY.get(c.get("source_type", ""), 5), -weight)
+        candidates.sort(key=_sort_key)
+    except Exception:
+        candidates.sort(key=lambda c: _QUALITY.get(c.get("source_type", ""), 5))
     return [c for c in candidates if c]
