@@ -302,14 +302,18 @@ def _generate_hook(streamer: str, clip_title: str) -> str:
         return clip_title[:60]
     try:
         import anthropic
+        from pipeline.persona import SYSTEM_PROMPT
         client = anthropic.Anthropic(api_key=api_key)
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=60,
+            system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content":
                 f"Write ONE punchy 5-8 word hook for a Twitch clip video overlay. "
+                f"It must stop the scroll in under 2 seconds — use a curiosity gap, "
+                f"shock, or pattern interrupt. "
                 f"Streamer: {streamer}. Clip: {clip_title}. "
-                f"Capitalize each word. 1 emoji max. No quotes. No hashtags. No explanation."
+                f"Capitalize Each Word. 1 emoji max. No quotes. No hashtags. No explanation."
             }],
         )
         return msg.content[0].text.strip()[:70]

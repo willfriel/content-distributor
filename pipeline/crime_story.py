@@ -14,18 +14,22 @@ import tempfile
 def generate_story_text(target_seconds: int = 75) -> tuple[str, str]:
     """Return (title, body) for a ~target_seconds horror/true-crime story."""
     import anthropic
+    from pipeline.persona import SYSTEM_PROMPT
     client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
     target_words = int(target_seconds * 2.3)
     resp = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=700,
+        system=SYSTEM_PROMPT,
         messages=[{
             "role": "user",
             "content": (
-                f"Write a {target_words}-word true-crime or horror story for a social media short. "
-                "The first sentence must be a hook that stops someone mid-scroll — visceral and shocking. "
-                "Build suspense throughout. End on a chilling, unsettling note. "
-                "Dark, specific, real-sounding details. No filler, no moralizing. "
+                f"Write a {target_words}-word true-crime or horror story for a YouTube Short / Instagram Reel. "
+                "The very first sentence must be a visceral, shocking hook that stops someone mid-scroll — "
+                "create immediate dread or disbelief. No warm-up, no scene-setting, no intro. "
+                "Build suspense with dark, specific, real-sounding details throughout. "
+                "End on a chilling, unresolved note that makes viewers want to share it. "
+                "No filler, no moralizing, no explanations. "
                 "Return ONLY the story text — no title, no headers, no quotation marks."
             ),
         }],

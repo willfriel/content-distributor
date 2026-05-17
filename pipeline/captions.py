@@ -85,6 +85,7 @@ def _template_captions(niche: str, title: str) -> tuple[str, str]:
 def _claude_captions(niche: str, title: str, api_key: str) -> tuple[str, str]:
     import anthropic
     from pipeline.style_learner import get_style_guide
+    from pipeline.persona import SYSTEM_PROMPT
 
     tags  = HASHTAGS.get(niche, "")
     guide = get_style_guide(niche)
@@ -106,15 +107,14 @@ Style guidelines learned from top-performing accounts in this niche:
 - Use these hashtags: {tags}
 """
 
-    prompt = f"""You create viral short-form video captions for social media (TikTok, Instagram Reels, YouTube Shorts).
-
-Niche: {niche}
+    prompt = f"""Niche: {niche}
 Video title/topic: {title}
 {style_context}
 Write exactly 2 different caption variants for this video. Each should:
+- Open with a hook that stops the scroll in the first 3 seconds (curiosity gap, emotional trigger, or pattern interrupt)
 - Be 1-2 punchy lines max (no more than 150 chars before hashtags)
-- Create curiosity, emotion, or FOMO — never describe what's in the video
-- Feel native to TikTok/Reels (casual, direct, sometimes use 1-2 emojis)
+- Never describe what's in the video — tease, provoke, or create FOMO instead
+- Feel native to Reels/Shorts (casual, direct, 1-2 emojis max)
 - NOT start with "I" or "We"
 - End with these hashtags on a new line: {tags}
 
@@ -124,8 +124,9 @@ VARIANT_B: [caption here]"""
 
     client = anthropic.Anthropic(api_key=api_key)
     msg    = client.messages.create(
-        model      = "claude-haiku-4-5-20251001",  # fast + cheap for captions
+        model      = "claude-haiku-4-5-20251001",
         max_tokens = 300,
+        system     = SYSTEM_PROMPT,
         messages   = [{"role": "user", "content": prompt}],
     )
     text = msg.content[0].text.strip()
