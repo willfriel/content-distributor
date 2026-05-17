@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import secrets
 import time
 from datetime import datetime
@@ -2219,8 +2220,7 @@ def debug_clip_fetch(streamer):
 # ---------------------------------------------------------------------------
 
 def _verify_callback_secret():
-    import os as _os2
-    secret = _os2.environ.get("CALLBACK_SECRET", "")
+    secret = os.environ.get("CALLBACK_SECRET", "")
     auth   = request.headers.get("Authorization", "")
     return bool(secret) and auth == f"Bearer {secret}"
 
