@@ -1861,6 +1861,93 @@ def get_ig_media(account_id):
     return jsonify(r.json())
 
 
+@app.route("/api/accounts/<int:ig_account_id>/mirror-welcome/<int:yt_account_id>", methods=["POST"])
+def mirror_welcome_to_youtube(ig_account_id, yt_account_id):
+    """
+    Find the welcome/oldest video post on an Instagram account and upload it to a YouTube channel.
+    Paginates through all IG posts searching for one with 'welcome' in caption, or falls back
+    to the oldest video post.
+    """
+    ig_account = SocialAccount.query.get_or_404(ig_account_id)
+    yt_account = SocialAccount.query.get_or_404(yt_account_id)
+
+    if ig_account.platform != "instagram":
+        return _error("ig_account_id must be an Instagram account")
+    if yt_account.platform != "youtube":
+        return _error("yt_account_id must be a YouTube account")
+
+    ig_creds = ig_account.get_credentials()
+    ig_token = ig_creds.get("access_token")
+    ig_id    = ig_creds.get("instagram_user_id")
+    if not ig_token or not ig_id:
+        return _error("Missing Instagram credentials")
+
+    import requests as _req
+
+    # Paginate through all IG posts to find welcome post
+    all_posts = []
+    after = None
+    for _ in range(20):  # max 20 pages of 50 = 1000 posts
+        params = {
+            "fields":       "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink",
+            "limit":        50,
+            "access_token": ig_token,
+        }
+        if after:
+            params["after"] = after
+        r = _req.get(
+            f"https://graph.instagram.com/v21.0/{ig_id}/media",
+            params=params, timeout=20,
+        )
+        r.raise_for_status()
+        data   = r.json()
+        batch  = data.get("data", [])
+        all_posts.extend(batch)
+        paging = data.get("paging", {})
+        after  = paging.get("cursors", {}).get("after")
+        if not paging.get("next") or not after or not batch:
+            break
+
+    # Find welcome post: caption contains "welcome", else oldest video
+    welcome = None
+    for p in all_posts:
+        if "welcome" in (p.get("caption") or "").lower() and p.get("media_type") == "VIDEO":
+            welcome = p
+            break
+    if not welcome:
+        videos = [p for p in all_posts if p.get("media_type") == "VIDEO"]
+        if videos:
+            welcome = min(videos, key=lambda p: p.get("timestamp", ""))
+
+    if not welcome:
+        return _error(f"No video posts found on {ig_account.account_name}")
+
+    media_url = welcome.get("media_url")
+    if not media_url:
+        return _error("Welcome post has no media_url")
+
+    caption = (welcome.get("caption") or f"Welcome to {yt_account.account_name}!")
+    title   = caption.split("\n")[0][:90].strip() or f"Welcome to {yt_account.account_name}!"
+
+    from integrations import youtube as yt_integration
+    yt_creds = yt_account.get_credentials()
+    try:
+        result = yt_integration.upload_video(
+            yt_creds, media_url, title, caption,
+            niche    = "everything",
+            is_short = True,
+        )
+        return jsonify({
+            "status":          "uploaded",
+            "ig_post_id":      welcome["id"],
+            "ig_post_time":    welcome.get("timestamp"),
+            "youtube_url":     result.get("url"),
+            "youtube_video_id": result.get("video_id"),
+        })
+    except Exception as e:
+        return _error(f"YouTube upload failed: {e}")
+
+
 @app.route("/api/accounts/<int:account_id>", methods=["PATCH"])
 def update_account(account_id):
     """Update account_name stored in DB. Body: { "account_name": "..." }"""
