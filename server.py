@@ -1796,6 +1796,45 @@ def pipeline_run_now(niche):
     return jsonify({"status": "triggered", "niche": niche})
 
 
+@app.route("/api/pipeline/health-check", methods=["POST"])
+def run_health_check():
+    """Trigger the health check immediately and return a report of what it found."""
+    from models import PipelineRun
+    from datetime import timedelta
+    now = datetime.utcnow()
+
+    # Snapshot state BEFORE running so we can report what changed
+    stuck_before = PipelineRun.query.filter(
+        PipelineRun.status     == "running",
+        PipelineRun.started_at <  now - timedelta(minutes=30),
+    ).all()
+    failed_before = PipelineRun.query.filter(
+        PipelineRun.status     == "failed",
+        PipelineRun.started_at >= now - timedelta(hours=24),
+    ).all()
+
+    report = {
+        "stuck_runs_found":  [{"id": r.id, "niche": r.niche, "started_at": str(r.started_at), "note": r.note} for r in stuck_before],
+        "failed_runs_found": [{"id": r.id, "niche": r.niche, "started_at": str(r.started_at), "note": r.note} for r in failed_before],
+    }
+
+    from pipeline.scheduler import _job_health_check
+    _job_health_check()
+
+    # Re-query after to show what changed
+    still_stuck = PipelineRun.query.filter(
+        PipelineRun.status     == "running",
+        PipelineRun.started_at <  now - timedelta(minutes=30),
+    ).count()
+    report["stuck_runs_cleared"]  = len(stuck_before) - still_stuck
+    report["retries_scheduled"]   = sum(
+        1 for r in failed_before
+        if r.note and "retried" in r.note
+    )
+    report["status"] = "ok"
+    return jsonify(report)
+
+
 @app.route("/api/pipeline/budget", methods=["POST"])
 def set_budget():
     """Set monthly credit quota. Body: {service, niche, monthly_limit}"""
