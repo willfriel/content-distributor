@@ -1881,75 +1881,79 @@ def mirror_welcome_to_youtube(ig_account_id, yt_account_id):
 
     def _do_mirror():
         import requests as _req, subprocess, tempfile, os, shutil, time
-        with app.app_context():
-            ig_acc = SocialAccount.query.get(ig_account_id)
-            yt_acc = SocialAccount.query.get(yt_account_id)
-            if not ig_acc or not yt_acc:
-                return
+        from pipeline.locks import heavy_op
+        # Wait up to 15 min for any in-progress pipeline job to finish before starting
+        if not heavy_op.acquire(timeout=900):
+            print(f"[mirror] Timed out waiting for lock — skipping {ig_account_id}→{yt_account_id}")
+            return
+        tmp_video_path = None
+        try:
+            with app.app_context():
+                ig_acc = SocialAccount.query.get(ig_account_id)
+                yt_acc = SocialAccount.query.get(yt_account_id)
+                if not ig_acc or not yt_acc:
+                    return
 
-            ig_creds = ig_acc.get_credentials()
-            ig_token = ig_creds.get("access_token")
-            ig_id    = ig_creds.get("instagram_user_id")
-            if not ig_token or not ig_id:
-                print(f"[mirror] Missing IG credentials for account {ig_account_id}")
-                return
+                ig_creds = ig_acc.get_credentials()
+                ig_token = ig_creds.get("access_token")
+                ig_id    = ig_creds.get("instagram_user_id")
+                if not ig_token or not ig_id:
+                    print(f"[mirror] Missing IG credentials for account {ig_account_id}")
+                    return
 
-            # Paginate through all IG posts
-            all_posts = []
-            after = None
-            for _ in range(20):
-                params = {
-                    "fields":       "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink",
-                    "limit":        50,
-                    "access_token": ig_token,
-                }
-                if after:
-                    params["after"] = after
-                r = _req.get(
-                    f"https://graph.instagram.com/v21.0/{ig_id}/media",
-                    params=params, timeout=20,
-                )
-                r.raise_for_status()
-                data   = r.json()
-                batch  = data.get("data", [])
-                all_posts.extend(batch)
-                paging = data.get("paging", {})
-                after  = paging.get("cursors", {}).get("after")
-                if not paging.get("next") or not after or not batch:
-                    break
+                all_posts = []
+                after = None
+                for _ in range(20):
+                    params = {
+                        "fields":       "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink",
+                        "limit":        50,
+                        "access_token": ig_token,
+                    }
+                    if after:
+                        params["after"] = after
+                    r = _req.get(
+                        f"https://graph.instagram.com/v21.0/{ig_id}/media",
+                        params=params, timeout=20,
+                    )
+                    r.raise_for_status()
+                    data   = r.json()
+                    batch  = data.get("data", [])
+                    all_posts.extend(batch)
+                    paging = data.get("paging", {})
+                    after  = paging.get("cursors", {}).get("after")
+                    if not paging.get("next") or not after or not batch:
+                        break
 
-            def _pick(posts, media_type):
-                for p in posts:
-                    if "welcome" in (p.get("caption") or "").lower() and p.get("media_type") == media_type:
-                        return p
-                typed = [p for p in posts if p.get("media_type") == media_type]
-                return min(typed, key=lambda p: p.get("timestamp", "")) if typed else None
+                def _pick(posts, media_type):
+                    for p in posts:
+                        if "welcome" in (p.get("caption") or "").lower() and p.get("media_type") == media_type:
+                            return p
+                    typed = [p for p in posts if p.get("media_type") == media_type]
+                    return min(typed, key=lambda p: p.get("timestamp", "")) if typed else None
 
-            if force_type in ("IMAGE", "VIDEO"):
-                welcome = _pick(all_posts, force_type)
-            else:
-                welcome = _pick(all_posts, "VIDEO") or _pick(all_posts, "IMAGE")
+                if force_type in ("IMAGE", "VIDEO"):
+                    welcome = _pick(all_posts, force_type)
+                else:
+                    welcome = _pick(all_posts, "VIDEO") or _pick(all_posts, "IMAGE")
 
-            if not welcome:
-                print(f"[mirror] No posts found on {ig_acc.account_name}")
-                return
+                if not welcome:
+                    print(f"[mirror] No posts found on {ig_acc.account_name}")
+                    return
 
-            media_url  = welcome.get("media_url")
-            media_type = welcome.get("media_type")
-            if not media_url:
-                print(f"[mirror] No media_url on {ig_acc.account_name} post {welcome.get('id')}")
-                return
+                media_url_val = welcome.get("media_url")
+                media_type    = welcome.get("media_type")
+                if not media_url_val:
+                    print(f"[mirror] No media_url on {ig_acc.account_name} post {welcome.get('id')}")
+                    return
 
-            caption = (welcome.get("caption") or f"Welcome to {yt_acc.account_name}!")
-            title   = caption.split("\n")[0][:90].strip() or f"Welcome to {yt_acc.account_name}!"
+                caption = (welcome.get("caption") or f"Welcome to {yt_acc.account_name}!")
+                title   = caption.split("\n")[0][:90].strip() or f"Welcome to {yt_acc.account_name}!"
 
-            from integrations import youtube as yt_integration
-            yt_creds = yt_acc.get_credentials()
+                from integrations import youtube as yt_integration
+                yt_creds = yt_acc.get_credentials()
 
-            tmp_video_path = None
-            try:
                 if media_type == "IMAGE":
-                    img_data = _req.get(media_url, timeout=30)
+                    img_data = _req.get(media_url_val, timeout=30)
                     img_data.raise_for_status()
                     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as img_f:
                         img_f.write(img_data.content)
@@ -1973,29 +1977,28 @@ def mirror_welcome_to_youtube(ig_account_id, yt_account_id):
                     base_url   = os.environ.get("BASE_URL", "https://content-distributor.onrender.com").rstrip("/")
                     upload_url = f"{base_url}/static/videos/welcome_{ig_account_id}_{yt_account_id}.mp4"
                 else:
-                    upload_url = media_url
+                    upload_url = media_url_val
 
                 result = yt_integration.upload_video(
                     yt_creds, upload_url, title, caption,
-                    niche    = "everything",
-                    is_short = True,
+                    niche="everything", is_short=True,
                 )
                 print(f"[mirror] ✅ {ig_acc.account_name} → {yt_acc.account_name}: {result.get('url')}")
 
-                # Clean up static copy after upload (give YouTube a minute to fetch it)
                 time.sleep(60)
                 static_copy = os.path.join("static", "videos", f"welcome_{ig_account_id}_{yt_account_id}.mp4")
                 if os.path.exists(static_copy):
                     os.unlink(static_copy)
 
-            except Exception as e:
-                print(f"[mirror] ❌ {ig_acc.account_name} → {yt_acc.account_name}: {e}")
-            finally:
-                if tmp_video_path and os.path.exists(tmp_video_path):
-                    try:
-                        os.unlink(tmp_video_path)
-                    except Exception:
-                        pass
+        except Exception as e:
+            print(f"[mirror] ❌ {ig_account_id}→{yt_account_id}: {e}")
+        finally:
+            if tmp_video_path and os.path.exists(tmp_video_path):
+                try:
+                    os.unlink(tmp_video_path)
+                except Exception:
+                    pass
+            heavy_op.release()
 
     import threading
     threading.Thread(target=_do_mirror, daemon=True).start()

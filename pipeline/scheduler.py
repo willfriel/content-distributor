@@ -152,6 +152,17 @@ def _posts_per_day(niche: str, app) -> int:
 
 def run_pipeline_for_niche(niche: str, app):
     """Download a video, generate captions, and post. Called by the scheduler."""
+    from pipeline.locks import heavy_op
+    if not heavy_op.acquire(blocking=False):
+        print(f"[pipeline] Skipping {niche} — another heavy operation is already running")
+        return
+    try:
+        _run_pipeline_for_niche_inner(niche, app)
+    finally:
+        heavy_op.release()
+
+
+def _run_pipeline_for_niche_inner(niche: str, app):
     with app.app_context():
         from models import db, Niche, SocialAccount, PipelineRun, CreditBudget, ContentQueue
         from server  import _run_job, _inject_affiliate_links
@@ -492,6 +503,17 @@ def run_crime_pipeline(app):
     4. Composite: darkened brainrot + narration + subtitle word overlay
     5. Post to all crime accounts
     """
+    from pipeline.locks import heavy_op
+    if not heavy_op.acquire(blocking=False):
+        print("[pipeline] Skipping crime — another heavy operation is already running")
+        return
+    try:
+        _run_crime_pipeline_inner(app)
+    finally:
+        heavy_op.release()
+
+
+def _run_crime_pipeline_inner(app):
     with app.app_context():
         from models import db, Niche, SocialAccount, PipelineRun, ContentQueue, CreditBudget
         from server  import _run_job
