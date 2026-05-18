@@ -106,7 +106,6 @@ def generate_voiceover(text: str, niche: str = "everything",
 
     try:
         from elevenlabs.client import ElevenLabs
-        from elevenlabs import save
 
         client = ElevenLabs(api_key=api_key)
         audio  = client.text_to_speech.convert(
@@ -118,13 +117,16 @@ def generate_voiceover(text: str, niche: str = "everything",
 
         tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
         tmp.close()
-        save(audio, tmp.name)
+        with open(tmp.name, "wb") as f:
+            for chunk in audio:
+                if chunk:
+                    f.write(chunk)
 
         print(f"[elevenlabs] Voiceover saved: voice={voice['name']}, path={tmp.name}")
         return tmp.name, voice["id"], voice["name"]
 
     except Exception as e:
-        print(f"[elevenlabs] Error generating voiceover: {e}")
+        print(f"[elevenlabs] Error generating voiceover ({type(e).__name__}): {e}")
         return None, None, None
 
 
