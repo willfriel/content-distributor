@@ -309,8 +309,17 @@ def _posts_per_day(niche: str, app) -> int:
 # Core pipeline job
 # ---------------------------------------------------------------------------
 
+def _is_paused(app) -> bool:
+    with app.app_context():
+        from models import SystemSetting
+        return SystemSetting.get("pipeline_paused") == "1"
+
+
 def run_pipeline_for_niche(niche: str, app):
     """Download a video, generate captions, and post. Called by the scheduler."""
+    if _is_paused(app):
+        print(f"[pipeline] Skipping {niche} — pipeline is paused")
+        return
     from pipeline.locks import heavy_op
     if not heavy_op.acquire(blocking=False):
         print(f"[pipeline] Skipping {niche} — another heavy operation is already running")
@@ -364,12 +373,56 @@ def _run_pipeline_for_niche_inner(niche: str, app):
                 run.status = "skipped"; run.note = "no video candidates found"
                 db.session.commit(); return
 
-            pick       = random.choice(real[:5])
+            # Filter out URLs we've already posted in the last 14 days to prevent double-posting
+            recent_cutoff = datetime.utcnow() - timedelta(days=14)
+            used_urls = {
+                r.source_url for r in PipelineRun.query.filter(
+                    PipelineRun.niche      == niche,
+                    PipelineRun.status     == "completed",
+                    PipelineRun.source_url != None,
+                    PipelineRun.started_at >= recent_cutoff,
+                ).all()
+            }
+            fresh = [c for c in real if c.get("url") not in used_urls]
+            pool  = fresh if fresh else real  # fallback to all if everything was used
+
+            # Score every candidate: source weight (learned engagement) × clip popularity signal.
+            # This replaces random.choice — the system converges on the best sources over time.
+            import math
+            from pipeline.learning import get_source_weight as _sw
+
+            def _candidate_score(c: dict) -> float:
+                subtype = (c.get("subreddit") or c.get("streamer") or
+                           c.get("game") or c.get("query"))
+                weight  = _sw(niche, c.get("source_type", ""), subtype)
+                # Use view count (Twitch) or Reddit score as popularity signal
+                popularity = c.get("views") or c.get("score") or 0
+                pop_factor = math.log10(popularity + 1) if popularity > 0 else 1.0
+                return weight * pop_factor
+
+            pool_scored = sorted(pool, key=_candidate_score, reverse=True)
+            pick = pool_scored[0]
             max_dur    = NICHE_MAX_DURATION.get(niche)
             video_path = _download_video(pick["url"], max_duration=max_dur)
             if not video_path:
                 run.status = "failed"; run.note = f"download failed: {pick['url']}"
                 db.session.commit(); return
+
+            # Apply standard layout: letterbox wide clips into center third,
+            # hook text in top third, @handle in bottom third
+            from pipeline.video_layout import apply_layout
+            primary_account = next(
+                (a for a in accounts if a.platform == "instagram"), accounts[0]
+            )
+            formatted = apply_layout(
+                video_path,
+                hook_text = title[:55],
+                handle    = primary_account.account_name,
+            )
+            if formatted != video_path:
+                try: os.unlink(video_path)
+                except Exception: pass
+                video_path = formatted
 
             static_dir = Path(app.root_path) / "static" / "videos"
             static_dir.mkdir(parents=True, exist_ok=True)
@@ -431,6 +484,7 @@ def _run_pipeline_for_niche_inner(niche: str, app):
             run.status       = "completed"
             run.note         = f"posted: {title[:60]}"
             run.video_url    = video_url
+            run.source_url   = pick.get("url")
             run.completed_at = datetime.utcnow()
             db.session.commit()
             print(f"[pipeline] Completed {niche}: {title[:60]}")
@@ -451,6 +505,9 @@ def run_kids_pipeline(app):
     2. Full video (3-5min)   → YouTube only
     Both are generated from the same story script.
     """
+    if _is_paused(app):
+        print("[pipeline] Skipping kids — pipeline is paused")
+        return
     with app.app_context():
         from models import db, Niche, SocialAccount, PipelineRun, ContentQueue, LumiStory
         from server import _run_job, _inject_affiliate_links
@@ -630,20 +687,35 @@ def run_kids_pipeline(app):
 
 
 def _source_credit(candidate: dict) -> str:
-    """Return a one-line attribution string for the bottom of a caption."""
-    src = candidate.get("source_type", "")
+    """Return a credit line for the bottom of every caption."""
+    src      = candidate.get("source_type", "")
+    streamer = candidate.get("streamer", "")
+    game     = candidate.get("game", "")
+    url      = candidate.get("url", "")
+
     if src == "youtube":
-        url = candidate.get("url", "")
         vid = url.split("v=")[-1].split("&")[0] if "v=" in url else ""
-        return f"Credit: youtube.com/watch?v={vid}" if vid else "Credit: youtube.com"
+        return f"Credit: youtu.be/{vid}" if vid else "Credit: YouTube"
+
     if src in ("reddit", "brainrot"):
-        sub = candidate.get("subreddit", "Reddit")
-        return f"Credit: r/{sub} (Reddit)"
+        sub = candidate.get("subreddit", "")
+        return f"Credit: r/{sub}" if sub else "Credit: Reddit"
+
     if src == "pexels":
-        return "Credit: Pexels (pexels.com)"
+        return "Credit: Pexels"
+
     if src == "twitch":
-        streamer = candidate.get("streamer", "")
-        return f"Credit: {streamer} on Twitch" if streamer else "Credit: Twitch"
+        if streamer and game:
+            return f"Credit: {streamer} on Twitch · {game}"
+        if streamer:
+            return f"Credit: {streamer} on Twitch"
+        if game:
+            return f"Credit: Twitch · {game}"
+        return "Credit: Twitch"
+
+    # Fallback — any externally sourced clip gets a generic credit
+    if url:
+        return "Credit: Original creator"
     return ""
 
 
@@ -665,6 +737,9 @@ def run_crime_pipeline(app):
     4. Composite: darkened brainrot + narration + subtitle word overlay
     5. Post to all crime accounts
     """
+    if _is_paused(app):
+        print("[pipeline] Skipping crime — pipeline is paused")
+        return
     from pipeline.locks import heavy_op
     if not heavy_op.acquire(blocking=False):
         print("[pipeline] Skipping crime — another heavy operation is already running")

@@ -1779,6 +1779,7 @@ def insights_dashboard():
 @app.route("/api/pipeline/status", methods=["GET"])
 def pipeline_status():
     from pipeline.scheduler import get_scheduler, NICHE_POST_TIMES
+    from models import SystemSetting
     scheduler = get_scheduler()
     jobs = []
     if scheduler:
@@ -1795,11 +1796,28 @@ def pipeline_status():
 
     return jsonify({
         "scheduler_running": bool(scheduler and scheduler.running),
+        "pipeline_paused":   SystemSetting.get("pipeline_paused") == "1",
         "jobs":              jobs,
         "recent_runs":       [r.to_dict() for r in recent_runs],
         "budgets":           [b.to_dict() for b in budgets],
         "post_times_utc":    {n: f"{h:02d}:{m:02d}" for n, (h, m) in NICHE_POST_TIMES.items()},
     })
+
+
+@app.route("/api/pipeline/pause", methods=["POST"])
+def pipeline_pause():
+    from models import SystemSetting
+    SystemSetting.set("pipeline_paused", "1")
+    print("[pipeline] ⏸ Pipeline PAUSED by user")
+    return jsonify({"paused": True, "message": "Pipeline paused — all scheduled posts will be skipped until resumed."})
+
+
+@app.route("/api/pipeline/resume", methods=["POST"])
+def pipeline_resume():
+    from models import SystemSetting
+    SystemSetting.set("pipeline_paused", "0")
+    print("[pipeline] ▶ Pipeline RESUMED by user")
+    return jsonify({"paused": False, "message": "Pipeline resumed — posts will run on their normal schedule."})
 
 
 @app.route("/api/pipeline/run-now/<niche>", methods=["POST"])
@@ -2850,6 +2868,7 @@ def _migrate():
         ("post_metrics",   "source_type",       "ALTER TABLE post_metrics ADD COLUMN source_type VARCHAR(50)"),
         ("post_metrics",   "source_subtype",    "ALTER TABLE post_metrics ADD COLUMN source_subtype VARCHAR(200)"),
         ("post_metrics",   "viral_milestone",   "ALTER TABLE post_metrics ADD COLUMN viral_milestone INTEGER DEFAULT 0"),
+        ("pipeline_runs",  "source_url",        "ALTER TABLE pipeline_runs ADD COLUMN source_url TEXT"),
     ]
     # Rename anatomy → gaming niche in place
     try:

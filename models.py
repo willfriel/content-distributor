@@ -206,6 +206,7 @@ class PipelineRun(db.Model):
     status       = db.Column(db.String(20), default="running")  # running/completed/failed/skipped
     note         = db.Column(db.String(500))
     video_url    = db.Column(db.Text)
+    source_url   = db.Column(db.Text)   # original source URL (Twitch/YouTube/Reddit) for dedupe
     started_at   = db.Column(db.DateTime, default=datetime.utcnow)
     completed_at = db.Column(db.DateTime)
 
@@ -393,6 +394,30 @@ class PostMetrics(db.Model):
             "posted_at": self.posted_at.isoformat() if self.posted_at else None,
             "metrics_fetched_at": self.metrics_fetched_at.isoformat() if self.metrics_fetched_at else None,
         }
+
+
+class SystemSetting(db.Model):
+    """Key/value store for global runtime flags (e.g. pipeline_paused)."""
+    __tablename__ = "system_settings"
+
+    key        = db.Column(db.String(100), primary_key=True)
+    value      = db.Column(db.String(500), nullable=False, default="")
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @classmethod
+    def get(cls, key: str, default: str = "") -> str:
+        row = cls.query.filter_by(key=key).first()
+        return row.value if row else default
+
+    @classmethod
+    def set(cls, key: str, value: str):
+        row = cls.query.filter_by(key=key).first()
+        if row:
+            row.value = value
+            row.updated_at = datetime.utcnow()
+        else:
+            db.session.add(cls(key=key, value=value))
+        db.session.commit()
 
 
 class SourceScore(db.Model):
